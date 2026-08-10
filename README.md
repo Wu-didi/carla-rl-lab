@@ -15,6 +15,7 @@
 <p align="center">
   <a href="https://github.com/Wu-didi/carla-rl-lab/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Wu-didi/carla-rl-lab?style=flat-square"></a>
   <a href="https://github.com/Wu-didi/carla-rl-lab/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/Wu-didi/carla-rl-lab?style=flat-square"></a>
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-16a34a?style=flat-square"></a>
   <a href="#experiment-tracking"><img alt="TensorBoard" src="https://img.shields.io/badge/logging-TensorBoard-ff6f00?style=flat-square&amp;logo=tensorflow&amp;logoColor=white"></a>
   <a href="#experiment-tracking"><img alt="Weights and Biases" src="https://img.shields.io/badge/logging-W%26B-facc15?style=flat-square&amp;logo=weightsandbiases&amp;logoColor=111827"></a>
 </p>
@@ -222,5 +223,9 @@ python -m unittest discover -s tests -v
 ## Contributing
 
 Keep additions readable from the training entry point. Prefer a function for stateless transformations, introduce a class only when it owns meaningful state, and include a CPU smoke test for new algorithms or research interfaces.
+
+## License
+
+CarlaRLLab is released under the [MIT License](LICENSE).
 
 CarlaRLLab is an independent research project built on CARLA and is not an official CARLA project.

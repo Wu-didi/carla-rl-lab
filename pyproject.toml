@@ -7,6 +7,7 @@ name = "carla-rl-lab"
 version = "0.1.0"
 description = "A research-first reinforcement learning lab for CARLA."
 readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.7"
 dependencies = [
   "gym==0.26.2",

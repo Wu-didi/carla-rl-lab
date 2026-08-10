@@ -400,6 +400,26 @@ length of the algorithm list.
 - [ ] Provide a minimal modification exercise for policy architecture and reward
   design so each tutorial is useful for research rather than only reproduction.
 
+### 6. Provide one-command installation and Docker environments
+
+- [ ] Add a single setup command, such as `scripts/setup.sh --carla 0.9.15`,
+  that creates the Python environment, installs project dependencies and the
+  matching CARLA API, and keeps every action visible in the terminal.
+- [ ] Add an environment doctor that checks the OS, Python, NVIDIA driver,
+  CUDA/GPU visibility, CARLA client version, server connection, required ports,
+  and common version conflicts with actionable error messages.
+- [ ] Provide versioned environment definitions for CARLA 0.9.13 and 0.9.15 so
+  a fresh installation does not depend on unpinned transitive packages.
+- [ ] Provide an NVIDIA-enabled Docker image and Docker Compose workflow for the
+  CARLA server and CarlaRLLab trainer, with mounted datasets, checkpoints, and
+  experiment logs.
+- [ ] Verify both native and Docker installation paths on a clean machine in CI;
+  the target user flow is one setup command followed by one smoke-test command.
+
+The Docker path will complement, not replace, native installation. Researchers
+must still be able to modify source files and run experiments directly without
+learning a container-specific framework.
+
 ## Smoke Test
 
 No running CARLA server is required for the core test suite:

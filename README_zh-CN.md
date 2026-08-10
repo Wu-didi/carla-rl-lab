@@ -392,6 +392,22 @@ TensorBoard/W&B 和第一个固定 benchmark。后续工作按照实验可复现
 - [ ] 提供修改 policy 结构与 reward 设计的最小科研练习，使教程不仅能复现实验，
   也能直接支撑二次研究。
 
+### 6. 提供一键安装与 Docker 环境
+
+- [ ] 增加类似 `scripts/setup.sh --carla 0.9.15` 的单条安装命令，自动创建 Python
+  环境、安装项目依赖和匹配的 CARLA API，同时在终端中清楚展示每个操作。
+- [ ] 增加环境诊断工具，检查操作系统、Python、NVIDIA 驱动、CUDA/GPU 可见性、
+  CARLA client 版本、server 连接、必要端口和常见版本冲突，并提供可执行的修复提示。
+- [ ] 分别为 CARLA 0.9.13 和 0.9.15 提供锁定版本的环境定义，保证全新安装不会受
+  未固定的间接依赖影响。
+- [ ] 提供支持 NVIDIA GPU 的 Docker image 与 Docker Compose 工作流，能够启动
+  CARLA server 和 CarlaRLLab trainer，并挂载 dataset、checkpoint 与实验日志。
+- [ ] 在干净机器和 CI 中验证本地与 Docker 两条安装路径；目标流程是一条安装命令，
+  再加一条 smoke-test 命令即可开始使用。
+
+Docker 是本地安装的补充，不会取代本地开发。研究者仍然可以直接修改源码并运行实验，
+不需要先学习一套容器专用框架。
+
 ## 冒烟测试
 
 核心测试不需要启动 CARLA server：

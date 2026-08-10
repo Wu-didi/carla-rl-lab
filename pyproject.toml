@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "carla-rl-lab"
+version = "0.1.0"
+description = "A research-first reinforcement learning lab for CARLA."
+readme = "README.md"
+requires-python = ">=3.7"
+dependencies = [
+  "gym==0.26.2",
+  "gymnasium==0.28.1",
+  "numpy==1.21.6",
+  "opencv-python==4.8.1.78",
+  "Pillow==9.5.0",
+  "requests==2.31.0",
+  "tensorboard==2.11.2",
+  "torch==1.13.1",
+]
+
+[project.optional-dependencies]
+wandb = ["wandb==0.15.12"]
+
+[tool.setuptools.packages.find]
+include = ["carla_rl_lab*"]
+exclude = ["legacy*", "artifacts*", "tests*"]

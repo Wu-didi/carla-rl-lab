@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments and editors
+.venv/
+venv/
+.idea/
+.vscode/
+
+# Experiments and local research archives
+artifacts/
+legacy/
+wandb/
+runs/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+events.out.tfevents.*
+
+# Datasets and sensor recordings
+data/
+datasets/
+recordings/
+*.npy
+*.npz
+
+# Build outputs
+build/
+dist/
+*.egg-info/

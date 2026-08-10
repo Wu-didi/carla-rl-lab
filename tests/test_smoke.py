@@ -10,9 +10,9 @@ import numpy as np
 from carla_rl_lab.algorithms import create_agent, get_algorithm, list_algorithms
 from carla_rl_lab.benchmarks import get_benchmark, list_benchmarks
 from carla_rl_lab.buffers import ReplayBuffer
-from carla_rl_lab.evaluation import BenchmarkEvaluator
-from carla_rl_lab.logging import NullLogger, TensorBoardLogger
-from carla_rl_lab.observations import VectorObservationAdapter
+from carla_rl_lab.evaluation import evaluate_benchmark
+from carla_rl_lab.logging import ExperimentLogger
+from carla_rl_lab.observations import encode_observation
 from carla_rl_lab.rewards import build_reward_profile
 
 
@@ -120,8 +120,7 @@ class CoreSmokeTest(unittest.TestCase):
         self.assertEqual(tuple(logs["attention_img"].shape), (1, 1, 37))
 
     def test_observation_and_replay_buffer(self):
-        adapter = VectorObservationAdapter(expected_dim=299)
-        encoded = adapter.encode(vector_observation())
+        encoded = encode_observation(vector_observation(), expected_dim=299)
         self.assertEqual(encoded.shape, (299,))
 
         buffer = ReplayBuffer(4)
@@ -146,7 +145,7 @@ class CoreSmokeTest(unittest.TestCase):
 
     def test_tensorboard_logger(self):
         with tempfile.TemporaryDirectory() as log_dir:
-            logger = TensorBoardLogger(log_dir, {"algorithm": "sac"})
+            logger = ExperimentLogger("tensorboard", log_dir, {"algorithm": "sac"})
             logger.log({"train/loss": 1.0}, step=0)
             logger.close()
             self.assertTrue(any(name.startswith("events.out.tfevents") for name in os.listdir(log_dir)))
@@ -154,17 +153,16 @@ class CoreSmokeTest(unittest.TestCase):
     def test_benchmark_evaluator(self):
         self.assertIn("lane_following_v0", list_benchmarks())
         spec = get_benchmark("lane_following_v0")
-        evaluator = BenchmarkEvaluator(NullLogger())
-        report = evaluator.evaluate(
-            spec.name,
+        report = evaluate_benchmark(
+            spec["name"],
             FakeEnv(),
             FakeAgent(),
-            VectorObservationAdapter(expected_dim=299),
             seeds=(0, 1),
+            expected_dim=299,
         )
-        self.assertEqual(report.summary["benchmark/success_rate"], 1.0)
-        self.assertEqual(report.summary["benchmark/return_mean"], 2.0)
-        self.assertEqual(report.summary["benchmark/cost_mean"], 0.5)
+        self.assertEqual(report["summary"]["benchmark/success_rate"], 1.0)
+        self.assertEqual(report["summary"]["benchmark/return_mean"], 2.0)
+        self.assertEqual(report["summary"]["benchmark/cost_mean"], 0.5)
 
 
 if __name__ == "__main__":

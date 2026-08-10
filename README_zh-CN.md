@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://github.com/Wu-didi/carla-rl-lab"><img alt="Version" src="https://img.shields.io/badge/version-0.1.0-2563eb?style=for-the-badge"></a>
   <a href="https://www.python.org/"><img alt="Python 3.7" src="https://img.shields.io/badge/Python-3.7-3776ab?style=for-the-badge&amp;logo=python&amp;logoColor=white"></a>
-  <a href="https://carla.org/"><img alt="CARLA 0.9.13" src="https://img.shields.io/badge/CARLA-0.9.13-e11d48?style=for-the-badge"></a>
+  <a href="https://carla.org/"><img alt="CARLA 0.9.13 and 0.9.15" src="https://img.shields.io/badge/CARLA-0.9.13%20%7C%200.9.15-e11d48?style=for-the-badge"></a>
   <a href="#算法规划"><img alt="SAC, TD3 and DDPG" src="https://img.shields.io/badge/RL-SAC%20%7C%20TD3%20%7C%20DDPG-059669?style=for-the-badge"></a>
 </p>
 
@@ -36,6 +36,7 @@
 | --- | --- |
 | 算法 | SAC、TD3、DDPG |
 | 策略网络 | MLP SAC、语义注意力 SAC、确定性 Actor-Critic |
+| CARLA 版本 | 0.9.13 已有文档；0.9.15 代码兼容，正式验证待完成 |
 | CARLA 控制 | 油门、方向盘、刹车 |
 | 奖励 | 原始 legacy reward、可直接修改的 `research_v1` 函数 |
 | 日志 | TensorBoard、W&B 在线/离线、reward 分项日志 |
@@ -335,15 +336,61 @@ tests/               # 快速 CPU 冒烟测试
 artifacts/           # 不提交的日志、checkpoint、报告
 ```
 
-## Roadmap
+## Roadmap / TODO
 
-- [x] 透明实现 SAC、TD3、DDPG
-- [x] 奖励函数可编辑并记录每个分项
-- [x] TensorBoard 与可选 W&B
-- [x] 第一个固定 CARLA benchmark
-- [ ] PPO 与独立 rollout runner
-- [ ] Offline dataset 格式与 TD3+BC baseline
-- [ ] 多随机种子结果表与 CI
+v0.1 基础已经完成：透明实现 SAC/TD3/DDPG、可编辑 reward 分项日志、
+TensorBoard/W&B 和第一个固定 benchmark。后续工作按照实验可复现性排序，而不是单纯
+追求算法数量。
+
+### 1. 补充并验证 CARLA 0.9.15
+
+- [ ] 增加 CARLA 0.9.15 安装流程，下载、解压、Python API、启动和故障排查需要与
+  0.9.13 教程同样详细。
+- [ ] 在实验元数据中自动记录 CARLA client/server 版本。
+- [ ] 分别在 CARLA 0.9.13 和 0.9.15 执行连接、reset/step、单 episode 与
+  `lane_following_v0` 验证。
+- [ ] 发布包含 Python、Ubuntu、CARLA、地图和已知限制的兼容性矩阵。当前代码已经
+  兼容 0.9.15，待完成的是正式文档和可重复验证。
+
+### 2. 补全主流 RL 算法类型
+
+- [ ] Online on-policy：先实现 PPO，再实现 A2C，并使用独立 rollout buffer 和
+  runner。
+- [ ] Offline RL：先定义 dataset 格式，再通过独立 dataset runner 实现 TD3+BC、
+  CQL 和 IQL。
+- [ ] Imitation learning：先实现 BC，专家轨迹格式稳定后再评估 GAIL/AIRL。
+- [ ] 每个新算法必须同时提供 `act/update/save/load`、正确的 runner、默认配置、
+  CPU 冒烟测试和 CARLA 训练命令。
+
+### 3. 实际训练每个算法并发布可复现 baseline
+
+- [ ] 每个已实现算法至少使用 3 个训练种子在 CARLA 中完整训练，并使用
+  `lane_following_v0` 的全部 5 个种子评测 checkpoint。
+- [ ] 每次实验记录 Git commit、完整配置、随机种子、环境版本、reward profile、
+  训练时间和硬件信息。
+- [ ] 最终与最佳 checkpoint 通过 GitHub Releases 发布，不把大型二进制文件直接
+  提交到 Git 历史。
+- [ ] 提交精简的 JSON/CSV benchmark 结果、训练曲线、mean/std 汇总表和每个算法的
+  失败案例分析。
+
+### 4. 完善并验证状态表示
+
+- [ ] 记录每个 observation 字段、向量区间、shape、单位、数值范围和更新频率。
+- [ ] 增加明确的归一化与裁剪统计，避免不同传感器的原始数值尺度直接混合。
+- [ ] 针对驾驶任务中的部分可观测问题，对比单帧、frame stacking 和 recurrent
+  state 表示。
+- [ ] 对 ego state、lane information、waypoints、LiDAR 和 risk field 做消融实验，
+  同时检查信息泄漏与传感器缺失情况。
+
+### 5. 为每个 RL 算法编写详细教程
+
+- [ ] 每个已实现算法增加一份 `docs/algorithms/<algorithm>.md`。
+- [ ] 讲清论文与目标函数、关键公式、网络结构、replay/rollout 数据流，以及公式到
+  源码行的准确对应关系。
+- [ ] 包含安装、训练、断点恢复、评测、checkpoint 下载、预期指标/曲线、超参数建议
+  和常见故障排查。
+- [ ] 提供修改 policy 结构与 reward 设计的最小科研练习，使教程不仅能复现实验，
+  也能直接支撑二次研究。
 
 ## 冒烟测试
 

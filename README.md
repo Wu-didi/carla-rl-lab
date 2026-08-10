@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://github.com/Wu-didi/carla-rl-lab"><img alt="Version" src="https://img.shields.io/badge/version-0.1.0-2563eb?style=for-the-badge"></a>
   <a href="https://www.python.org/"><img alt="Python 3.7" src="https://img.shields.io/badge/Python-3.7-3776ab?style=for-the-badge&amp;logo=python&amp;logoColor=white"></a>
-  <a href="https://carla.org/"><img alt="CARLA 0.9.13" src="https://img.shields.io/badge/CARLA-0.9.13-e11d48?style=for-the-badge"></a>
+  <a href="https://carla.org/"><img alt="CARLA 0.9.13 and 0.9.15" src="https://img.shields.io/badge/CARLA-0.9.13%20%7C%200.9.15-e11d48?style=for-the-badge"></a>
   <a href="#algorithm-scope"><img alt="SAC, TD3 and DDPG" src="https://img.shields.io/badge/RL-SAC%20%7C%20TD3%20%7C%20DDPG-059669?style=for-the-badge"></a>
 </p>
 
@@ -36,6 +36,7 @@
 | --- | --- |
 | Algorithms | SAC, TD3, DDPG |
 | Policy networks | MLP SAC, semantic-attention SAC, deterministic actor-critic |
+| CARLA versions | 0.9.13 documented; 0.9.15 code-compatible, formal validation pending |
 | CARLA control | Throttle, steering, brake |
 | Rewards | Legacy reward and editable `research_v1` function |
 | Tracking | TensorBoard, W&B online/offline, per-term reward logs |
@@ -338,15 +339,66 @@ tests/               # Fast CPU smoke tests
 artifacts/           # Ignored runs, checkpoints, reports
 ```
 
-## Roadmap
+## Roadmap / TODO
 
-- [x] Transparent SAC, TD3, and DDPG implementations
-- [x] Editable rewards with per-term logging
-- [x] TensorBoard and optional W&B tracking
-- [x] First fixed CARLA benchmark
-- [ ] PPO with a separate rollout runner
-- [ ] Offline dataset format and TD3+BC baseline
-- [ ] Multi-seed benchmark tables and CI
+The v0.1 foundation is complete: transparent SAC/TD3/DDPG implementations,
+editable reward logging, TensorBoard/W&B tracking, and the first fixed
+benchmark. The next work is prioritized by reproducibility rather than by the
+length of the algorithm list.
+
+### 1. Document and validate CARLA 0.9.15
+
+- [ ] Add a CARLA 0.9.15 installation path with the same download, extraction,
+  Python API, launch, and troubleshooting detail as the 0.9.13 guide.
+- [ ] Add runtime CARLA client/server version reporting to experiment metadata.
+- [ ] Run connection, reset/step, one-episode, and `lane_following_v0` checks on
+  both CARLA 0.9.13 and 0.9.15.
+- [ ] Publish a compatibility table covering Python, Ubuntu, CARLA, maps, and
+  known limitations. The current code is already compatible with 0.9.15; the
+  missing work is formal documentation and repeatable validation.
+
+### 2. Complete the main RL algorithm families
+
+- [ ] Online on-policy: implement PPO first, then A2C, with a dedicated rollout
+  buffer and runner.
+- [ ] Offline RL: define the dataset format, then implement TD3+BC, CQL, and IQL
+  with a dedicated dataset runner.
+- [ ] Imitation learning: add BC first, then evaluate GAIL/AIRL after the expert
+  trajectory format is stable.
+- [ ] Require every new algorithm to provide `act/update/save/load`, the correct
+  runner, a default config, a CPU smoke test, and a CARLA training command.
+
+### 3. Train every algorithm and publish reproducible baselines
+
+- [ ] Train every implemented algorithm in CARLA with at least 3 training seeds,
+  then evaluate each checkpoint on all 5 `lane_following_v0` seeds.
+- [ ] Record the Git commit, full config, seeds, environment version, reward
+  profile, wall-clock time, and hardware for every run.
+- [ ] Publish final and best checkpoints through GitHub Releases instead of
+  committing large binary files to the Git repository.
+- [ ] Commit compact JSON/CSV benchmark results, learning curves, aggregate
+  mean/std tables, and failure analysis for each algorithm.
+
+### 4. Improve and validate the state representation
+
+- [ ] Document every observation field, vector slice, shape, unit, range, and
+  update frequency.
+- [ ] Add explicit normalization and clipping statistics instead of relying on
+  raw heterogeneous sensor scales.
+- [ ] Evaluate single-frame, frame-stacked, and recurrent state representations
+  for partially observable driving situations.
+- [ ] Add ablations for ego state, lane information, waypoints, LiDAR, and risk
+  field inputs, including checks for information leakage and missing sensors.
+
+### 5. Write a detailed tutorial for every algorithm
+
+- [ ] Add `docs/algorithms/<algorithm>.md` for each implemented method.
+- [ ] Cover the paper and objective, key equations, network structure, replay or
+  rollout data flow, and the exact mapping from equations to source code.
+- [ ] Include installation, training, resume, evaluation, checkpoint download,
+  expected metrics/curves, hyperparameter guidance, and troubleshooting.
+- [ ] Provide a minimal modification exercise for policy architecture and reward
+  design so each tutorial is useful for research rather than only reproduction.
 
 ## Smoke Test
 

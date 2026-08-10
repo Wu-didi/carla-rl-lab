@@ -63,36 +63,169 @@ flowchart LR
 
 ## 快速开始
 
-当前参考环境为 **CARLA 0.9.13** 与 **Python 3.7**。
+当前参考环境使用预编译的 **CARLA 0.9.13 Linux 安装包**与
+**Python 3.7**。以下命令默认使用 Ubuntu x86_64、Conda 和 NVIDIA GPU。
+CARLA 官方建议至少 6 GB 显存，推荐 8 GB，预留约 20 GB 磁盘空间，并确保
+TCP 端口 2000 和 2001 可用。下载来源参见
+[CARLA 0.9.13 官方 Release](https://github.com/carla-simulator/carla/releases/tag/0.9.13)
+与[官方安装文档](https://carla.readthedocs.io/en/0.9.13/start_quickstart/)。
+
+### 0. 检查基础条件
+
+安装下载所需的基础工具，并确认 NVIDIA 驱动和 Conda 已经可用：
 
 ```bash
-git clone git@github.com:Wu-didi/carla-rl-lab.git
-cd carla-rl-lab
-conda create -n carla37 python=3.7
-conda activate carla37
-pip install -r requirements.txt
+sudo apt-get update
+sudo apt-get install -y git wget tar
+
+nvidia-smi
+conda --version
 ```
 
-从 CARLA 发行包安装匹配的 Python API，然后在 CARLA 安装目录启动模拟器。
+如果找不到 `conda`，先安装
+[Linux 版 Miniconda](https://docs.conda.io/projects/miniconda/en/latest/)。GPU 驱动安装方式
+与具体机器有关，需要在启动 CARLA 前完成。
+
+### 1. 规划安装目录
+
+CARLA 模拟器不要解压到本 Git 仓库中。将大型二进制文件和项目源码分开，后续更新
+CarlaRLLab 时不会误操作模拟器文件。
+
+```bash
+mkdir -p "$HOME/simulators/carla/0.9.13"
+mkdir -p "$HOME/workspace"
+
+export CARLA_ROOT="$HOME/simulators/carla/0.9.13"
+export CARLA_RL_LAB_ROOT="$HOME/workspace/carla-rl-lab"
+```
+
+变量只对当前终端有效。需要在新终端中自动生效时，将两条 `export` 命令加入
+`~/.bashrc`。
+
+### 2. 下载并解压 CARLA 0.9.13
+
+在 `CARLA_ROOT` 中下载官方 Ubuntu 安装包，并直接解压到当前目录。压缩包会把
+`CarlaUE4.sh` 等文件释放到当前目录，不要再额外创建一层嵌套的
+`CARLA_0.9.13/` 文件夹。
+
+```bash
+cd "$CARLA_ROOT"
+wget -c https://tiny.carla.org/carla-0-9-13-linux \
+  -O CARLA_0.9.13.tar.gz
+tar -xzf CARLA_0.9.13.tar.gz
+```
+
+解压后的关键目录应当如下：
+
+```text
+$CARLA_ROOT/
+  CarlaUE4.sh
+  CarlaUE4/
+  PythonAPI/
+    carla/dist/
+      carla-0.9.13-cp37-cp37m-manylinux_2_27_x86_64.whl
+```
+
+确认启动脚本与 Python 3.7 wheel 均存在：
+
+```bash
+test -x "$CARLA_ROOT/CarlaUE4.sh" && echo "CARLA server: OK"
+ls "$CARLA_ROOT"/PythonAPI/carla/dist/*cp37*.whl
+```
+
+### 3. 可选：安装额外地图
+
+本项目的 `lane_following_v0` benchmark 使用基础包已经包含的 Town05，因此第一版
+无需下载额外地图。只有需要 Town06、Town07 或 Town10 时才执行：
+
+```bash
+cd "$CARLA_ROOT"
+wget -c https://tiny.carla.org/additional-maps-0-9-13-linux \
+  -O Import/AdditionalMaps_0.9.13.tar.gz
+./ImportAssets.sh
+```
+
+### 4. 下载 CarlaRLLab 并创建 Python 环境
+
+```bash
+git clone https://github.com/Wu-didi/carla-rl-lab.git "$CARLA_RL_LAB_ROOT"
+cd "$CARLA_RL_LAB_ROOT"
+
+conda create -n carla37 python=3.7 -y
+conda activate carla37
+python -m pip install -r requirements.txt
+```
+
+### 5. 安装完全匹配的 CARLA Python API
+
+使用 CARLA 安装包自带的 wheel。不要随意从 PyPI 安装其他版本的 `carla`，否则
+Python client 与 CARLA server 可能不兼容。
+
+```bash
+python -m pip install \
+  "$CARLA_ROOT/PythonAPI/carla/dist/carla-0.9.13-cp37-cp37m-manylinux_2_27_x86_64.whl"
+
+python -c "import carla; print('CARLA Python API:', carla.__file__)"
+```
+
+### 6. 启动 CARLA Server
+
+打开**终端 A**，进入解压后的 CARLA 根目录，使用下面任一项目约定命令。首次启动
+可能需要等待一段时间。
 
 **无界面模式：**
 
 ```bash
+cd "$CARLA_ROOT"
 ./CarlaUE4.sh -RenderOffScreen -quality_level=Low-prefernvidia
 ```
 
 **窗口模式：**
 
 ```bash
+cd "$CARLA_ROOT"
 ./CarlaUE4.sh -quality_level=Low-prefernvidia
 ```
 
-仓库启动脚本保留了完全相同的两条命令：
+仓库中的启动脚本可以在任意目录执行相同命令：
 
 ```bash
-CARLA_ROOT=/path/to/CARLA scripts/launch_carla.sh offscreen
-CARLA_ROOT=/path/to/CARLA scripts/launch_carla.sh window
+cd "$CARLA_RL_LAB_ROOT"
+CARLA_ROOT="$CARLA_ROOT" scripts/launch_carla.sh offscreen
+# 或者：CARLA_ROOT="$CARLA_ROOT" scripts/launch_carla.sh window
 ```
+
+### 7. 验证 Server 连接与项目环境
+
+保持终端 A 运行。打开**终端 B**，激活同一个 Conda 环境，并连接默认 RPC 端口
+`2000`：
+
+```bash
+conda activate carla37
+cd "$CARLA_RL_LAB_ROOT"
+
+python -c "import carla; c=carla.Client('127.0.0.1', 2000); c.set_timeout(10.0); print('Connected map:', c.get_world().get_map().name)"
+python -m unittest discover -s tests -v
+```
+
+两条命令都成功后，说明模拟器、Python API 和 CarlaRLLab 核心环境已经就绪，可以
+继续执行下一节的训练命令。
+
+<details>
+<summary><strong>常见安装问题</strong></summary>
+
+- `ModuleNotFoundError: carla`：确认已经激活 `carla37`，然后重新安装
+  `$CARLA_ROOT/PythonAPI/carla/dist/` 中的准确版本 wheel。
+- `*.whl is not a supported wheel`：确认 `python --version` 为 Linux x86_64
+  平台上的 Python 3.7，并检查 `python -m pip --version` 不低于 20.3。
+- `connection refused` 或连接超时：等待 CARLA 完成启动，确认终端 A 仍在运行，
+  并检查端口 `2000`、`2001` 是否被占用。
+- CARLA 启动后退出：运行 `nvidia-smi` 检查 NVIDIA 驱动是否可见，然后重试无界面
+  低画质启动命令。
+- Client 与 Server 版本不一致：卸载环境中单独安装的 `carla`，重新安装 CARLA
+  0.9.13 安装包自带的 wheel。
+
+</details>
 
 ## 训练
 

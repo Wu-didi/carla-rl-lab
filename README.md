@@ -63,36 +63,172 @@ There is no trainer hierarchy and no chain of reward classes. Stateless research
 
 ## Quick Start
 
-The reference setup uses **CARLA 0.9.13** and **Python 3.7**.
+The reference setup uses the prebuilt **CARLA 0.9.13 Linux package** and
+**Python 3.7**. The commands below assume Ubuntu x86_64, Conda, and an NVIDIA
+GPU. CARLA's official guide recommends at least 6 GB of GPU memory, preferably
+8 GB, about 20 GB of free disk space, and available TCP ports 2000 and 2001.
+See the [CARLA 0.9.13 release](https://github.com/carla-simulator/carla/releases/tag/0.9.13)
+and [official package installation guide](https://carla.readthedocs.io/en/0.9.13/start_quickstart/).
+
+### 0. Check prerequisites
+
+Install the basic download tools and confirm that the NVIDIA driver and Conda
+are available:
 
 ```bash
-git clone git@github.com:Wu-didi/carla-rl-lab.git
-cd carla-rl-lab
-conda create -n carla37 python=3.7
-conda activate carla37
-pip install -r requirements.txt
+sudo apt-get update
+sudo apt-get install -y git wget tar
+
+nvidia-smi
+conda --version
 ```
 
-Install the matching CARLA Python API from your CARLA distribution, then start the simulator from its installation directory.
+If `conda` is missing, install
+[Miniconda for Linux](https://docs.conda.io/projects/miniconda/en/latest/).
+GPU driver installation is machine-specific and should be completed before
+starting CARLA.
+
+### 1. Choose installation directories
+
+Keep the simulator outside this Git repository. This avoids committing CARLA's
+large binaries and makes it possible to upgrade the project independently.
+
+```bash
+mkdir -p "$HOME/simulators/carla/0.9.13"
+mkdir -p "$HOME/workspace"
+
+export CARLA_ROOT="$HOME/simulators/carla/0.9.13"
+export CARLA_RL_LAB_ROOT="$HOME/workspace/carla-rl-lab"
+```
+
+These variables apply to the current terminal. Add the two `export` lines to
+`~/.bashrc` if you want them available in new terminals.
+
+### 2. Download and extract CARLA 0.9.13
+
+Download the official Ubuntu package into `CARLA_ROOT`, then extract it in the
+same directory. The archive expands directly into that directory; do not create
+another nested `CARLA_0.9.13/` folder inside it.
+
+```bash
+cd "$CARLA_ROOT"
+wget -c https://tiny.carla.org/carla-0-9-13-linux \
+  -O CARLA_0.9.13.tar.gz
+tar -xzf CARLA_0.9.13.tar.gz
+```
+
+After extraction, the important files should look like this:
+
+```text
+$CARLA_ROOT/
+  CarlaUE4.sh
+  CarlaUE4/
+  PythonAPI/
+    carla/dist/
+      carla-0.9.13-cp37-cp37m-manylinux_2_27_x86_64.whl
+```
+
+Verify that the launcher and Python 3.7 wheel exist:
+
+```bash
+test -x "$CARLA_ROOT/CarlaUE4.sh" && echo "CARLA server: OK"
+ls "$CARLA_ROOT"/PythonAPI/carla/dist/*cp37*.whl
+```
+
+### 3. Optional: install the additional maps
+
+This repository's `lane_following_v0` benchmark uses Town05, which is included
+in the base package. Only install the additional package when you need Town06,
+Town07, or Town10.
+
+```bash
+cd "$CARLA_ROOT"
+wget -c https://tiny.carla.org/additional-maps-0-9-13-linux \
+  -O Import/AdditionalMaps_0.9.13.tar.gz
+./ImportAssets.sh
+```
+
+### 4. Clone CarlaRLLab and create the environment
+
+```bash
+git clone https://github.com/Wu-didi/carla-rl-lab.git "$CARLA_RL_LAB_ROOT"
+cd "$CARLA_RL_LAB_ROOT"
+
+conda create -n carla37 python=3.7 -y
+conda activate carla37
+python -m pip install -r requirements.txt
+```
+
+### 5. Install the matching CARLA Python API
+
+Use the wheel bundled with the simulator. Installing a different `carla`
+version from PyPI can cause client/server incompatibilities.
+
+```bash
+python -m pip install \
+  "$CARLA_ROOT/PythonAPI/carla/dist/carla-0.9.13-cp37-cp37m-manylinux_2_27_x86_64.whl"
+
+python -c "import carla; print('CARLA Python API:', carla.__file__)"
+```
+
+### 6. Start the CARLA server
+
+Open **Terminal A**, enter the extracted CARLA directory, and use one of the
+following project commands. The first startup can take a while.
 
 **Off-screen:**
 
 ```bash
+cd "$CARLA_ROOT"
 ./CarlaUE4.sh -RenderOffScreen -quality_level=Low-prefernvidia
 ```
 
 **Windowed:**
 
 ```bash
+cd "$CARLA_ROOT"
 ./CarlaUE4.sh -quality_level=Low-prefernvidia
 ```
 
-The repository wrapper preserves the same two commands:
+The repository wrapper runs the same commands from any directory:
 
 ```bash
-CARLA_ROOT=/path/to/CARLA scripts/launch_carla.sh offscreen
-CARLA_ROOT=/path/to/CARLA scripts/launch_carla.sh window
+cd "$CARLA_RL_LAB_ROOT"
+CARLA_ROOT="$CARLA_ROOT" scripts/launch_carla.sh offscreen
+# Or: CARLA_ROOT="$CARLA_ROOT" scripts/launch_carla.sh window
 ```
+
+### 7. Verify the server connection
+
+Keep Terminal A running. Open **Terminal B** and connect with the same Conda
+environment and default RPC port `2000`:
+
+```bash
+conda activate carla37
+cd "$CARLA_RL_LAB_ROOT"
+
+python -c "import carla; c=carla.Client('127.0.0.1', 2000); c.set_timeout(10.0); print('Connected map:', c.get_world().get_map().name)"
+python -m unittest discover -s tests -v
+```
+
+If both commands succeed, the simulator, Python API, and CarlaRLLab core are
+ready. Continue to the training commands below.
+
+<details>
+<summary><strong>Common setup problems</strong></summary>
+
+- `ModuleNotFoundError: carla`: activate `carla37` and reinstall the exact
+  wheel from `$CARLA_ROOT/PythonAPI/carla/dist/`.
+- `*.whl is not a supported wheel`: confirm `python --version` reports Python
+  3.7 on Linux x86_64, then check `python -m pip --version` is at least 20.3.
+- `connection refused` or timeout: wait for CARLA to finish loading, confirm
+  Terminal A is still running, and check ports `2000` and `2001` are free.
+- CARLA exits during startup: run `nvidia-smi`, verify the NVIDIA driver is
+  visible, and retry the off-screen low-quality command.
+- Client and server version warnings: remove any separately installed `carla`
+  package and reinstall the wheel bundled with CARLA 0.9.13.
+
+</details>
 
 ## Train
 

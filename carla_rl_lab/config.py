@@ -45,6 +45,37 @@ class Config:
     td3_noise_clip: float = 0.5
     td3_policy_delay: int = 2
 
+    # On-policy (PPO / A2C)
+    rollout_steps: int = 2048
+    gae_lambda: float = 0.95
+    policy_lr: float = 3e-4
+    ppo_clip: float = 0.2
+    ppo_epochs: int = 10
+    ppo_minibatch_size: int = 64
+    total_timesteps: int = 1_000_000
+    entropy_coef: float = 0.0
+    value_coef: float = 0.5
+    max_grad_norm: float = 0.5
+
+    # Offline RL
+    dataset_path: str = ''
+    offline_updates: int = 100_000
+    checkpoint_interval: int = 10_000
+    td3_bc_alpha: float = 2.5
+    cql_alpha: float = 1.0
+    cql_temperature: float = 1.0
+    cql_num_random: int = 10
+    offline_entropy_alpha: float = 0.2
+    iql_expectile: float = 0.7
+    iql_beta: float = 3.0
+    iql_max_weight: float = 100.0
+
+    # Imitation learning
+    expert_dataset_path: str = ''
+    discriminator_lr: float = 3e-4
+    discriminator_updates: int = 1
+    imitation_updates: int = 100_000
+
     # Replay Buffer & 训练节拍
     buffer_size: int = 600_000
     minimal_size: int = 500

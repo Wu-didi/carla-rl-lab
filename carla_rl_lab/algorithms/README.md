@@ -22,11 +22,17 @@ training loop. The v1 trainer is an `off_policy` runner.
 | Algorithm | Family | Status | Notes |
 | --- | --- | --- | --- |
 | SAC | off-policy | implemented | Editable MLP or semantic-attention actor and critics. |
-| PPO | on-policy | planned | Add rollout buffer, clipped policy loss, GAE. |
+| PPO / A2C | on-policy | implemented | Dedicated rollout buffer, GAE, clipped PPO and synchronous A2C losses. |
 | TD3 | off-policy | implemented | Compact baseline with twin critics, delayed actor update, target policy smoothing. |
 | DDPG | off-policy | implemented | Compact deterministic actor/critic baseline. |
-| GAIL | imitation | planned | A pre-refactor experiment is preserved locally under `legacy/`. |
-| CQL / IQL / TD3+BC | offline RL | planned | Requires a stable dataset API and offline evaluator. |
+| BC / GAIL / AIRL | imitation | implemented | Expert-only BC and PPO-based adversarial mixed runner. |
+| CQL / IQL / TD3+BC | offline RL | implemented | Validated `.npz` dataset API and fixed-dataset runner. |
+
+## Dataset Format
+
+Offline RL and AIRL consume `.npz` files with equally sized `states`,
+`actions`, `rewards`, `next_states`, and `dones` arrays. BC and GAIL accept a
+smaller expert file containing only `states` and `actions`.
 
 ## Adding an Algorithm
 

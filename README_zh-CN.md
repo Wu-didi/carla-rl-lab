@@ -9,7 +9,7 @@
   <a href="https://github.com/Wu-didi/carla-rl-lab"><img alt="Version" src="https://img.shields.io/badge/version-0.1.0-2563eb?style=for-the-badge"></a>
   <a href="https://www.python.org/"><img alt="Python 3.7" src="https://img.shields.io/badge/Python-3.7-3776ab?style=for-the-badge&amp;logo=python&amp;logoColor=white"></a>
   <a href="https://carla.org/"><img alt="CARLA 0.9.13 and 0.9.15" src="https://img.shields.io/badge/CARLA-0.9.13%20%7C%200.9.15-e11d48?style=for-the-badge"></a>
-  <a href="#算法规划"><img alt="SAC, TD3 and DDPG" src="https://img.shields.io/badge/RL-SAC%20%7C%20TD3%20%7C%20DDPG-059669?style=for-the-badge"></a>
+  <a href="#算法规划"><img alt="11 RL algorithms" src="https://img.shields.io/badge/RL-11%20algorithms-059669?style=for-the-badge"></a>
 </p>
 
 <p align="center">
@@ -28,14 +28,15 @@
 </p>
 
 > [!IMPORTANT]
-> CarlaRLLab 不是 SB3 的 CARLA 封装。策略网络、更新公式、奖励函数、训练循环、日志和 benchmark 协议都保持可见、可改。v0.1 刻意控制范围：先把在线 off-policy 主链路做可靠，再扩展更多 RL 类型。
+> CarlaRLLab 不是 SB3 的 CARLA 封装。策略网络、更新公式、奖励函数、训练循环、
+> 日志和 benchmark 协议都保持可见、可改。每种数据源只对应一个小而明确的 runner。
 
 ## 当前能力
 
 | 科研模块 | v0.1 |
 | --- | --- |
-| 算法 | SAC、TD3、DDPG |
-| 策略网络 | MLP SAC、语义注意力 SAC、确定性 Actor-Critic |
+| 算法 | SAC、TD3、DDPG、PPO、A2C、TD3+BC、CQL、IQL、BC、GAIL、AIRL |
+| 策略网络 | Gaussian 与确定性 Actor-Critic、语义注意力 SAC |
 | CARLA 版本 | 0.9.13 已有文档；0.9.15 代码兼容，正式验证待完成 |
 | CARLA 控制 | 油门、方向盘、刹车 |
 | 奖励 | 原始 legacy reward、可直接修改的 `research_v1` 函数 |
@@ -43,24 +44,25 @@
 | Benchmark | 可复现的 `lane_following_v0` 协议与 JSON 报告 |
 | 验证 | 覆盖算法、奖励、日志和评测的 CPU 冒烟测试 |
 
-## 一条训练主链路
+## 明确分离的训练链路
 
 ```mermaid
 flowchart LR
-    A[CARLA] --> B[Observation dict]
-    B --> C[encode_observation]
-    C --> D[Agent: act]
-    D --> A
-    A --> E[Reward function]
-    E --> F[ReplayBuffer]
-    F --> G[Agent: update]
-    G --> H["TensorBoard / W&B"]
-    G --> I[Checkpoint]
-    I --> J[Fixed benchmark]
-    J --> K[JSON report]
+    A[CARLA] --> B[Observation + reward]
+    B --> C[ReplayBuffer: SAC / TD3 / DDPG]
+    B --> D[RolloutBuffer: PPO / A2C]
+    E[固定 dataset] --> F[TD3+BC / CQL / IQL / BC]
+    E --> G[GAIL / AIRL]
+    B --> G
+    C --> H[Agent update]
+    D --> H
+    F --> H
+    G --> H
+    H --> I[日志 + checkpoint + benchmark]
 ```
 
-项目没有 trainer 继承树，也没有 reward class 链。无状态科研逻辑使用普通函数，只有真正持有状态的对象才使用 class。
+项目没有 trainer 继承树，也没有 reward class 链。四个 runner 只在数据流确实不同时
+分开。
 
 ## 快速开始
 
@@ -239,9 +241,25 @@ python scripts/train.py --algo td3 --reward research_v1 --logger both --wandb-mo
 
 # 从 checkpoint 恢复 DDPG
 python scripts/train.py --algo ddpg --checkpoint /path/to/ddpg_ckpt.pt
+
+# PPO / A2C 从 CARLA 收集 fresh rollout
+python scripts/train_on_policy.py --algo ppo --total-timesteps 1000000
+
+# Offline RL 使用固定的五字段 .npz transition dataset
+python scripts/train_offline.py --algo td3_bc --dataset /path/to/transitions.npz
+python scripts/train_offline.py --algo cql --dataset /path/to/transitions.npz
+python scripts/train_offline.py --algo iql --dataset /path/to/transitions.npz
+
+# BC 只需 states/actions；GAIL、AIRL 还会在 CARLA 中收集 policy rollout
+python scripts/train_imitation.py --algo bc --expert-dataset /path/to/expert.npz
+python scripts/train_imitation.py --algo gail --expert-dataset /path/to/expert.npz
+python scripts/train_imitation.py --algo airl --expert-dataset /path/to/expert.npz
 ```
 
 实验输出位于 `artifacts/runs/<run-name>/`，默认不会提交到 Git。
+离线 transition dataset 是包含 `states`、`actions`、`rewards`、
+`next_states`、`dones` 的 `.npz` 文件。BC 与 GAIL 只要求前两个字段，AIRL
+要求完整 transition。
 
 ## 修改科研代码
 
@@ -251,6 +269,9 @@ python scripts/train.py --algo ddpg --checkpoint /path/to/ddpg_ckpt.pt
 | --- | --- |
 | 修改 SAC 或注意力模型 | [`carla_rl_lab/algorithms/sac.py`](carla_rl_lab/algorithms/sac.py) |
 | 修改 TD3 / DDPG | [`carla_rl_lab/algorithms/td3.py`](carla_rl_lab/algorithms/td3.py) / [`ddpg.py`](carla_rl_lab/algorithms/ddpg.py) |
+| 修改 PPO / A2C | [`carla_rl_lab/algorithms/on_policy.py`](carla_rl_lab/algorithms/on_policy.py) |
+| 修改 Offline RL | [`carla_rl_lab/algorithms/offline.py`](carla_rl_lab/algorithms/offline.py) |
+| 修改模仿学习 | [`carla_rl_lab/algorithms/imitation.py`](carla_rl_lab/algorithms/imitation.py) |
 | 设计奖励函数 | [`carla_rl_lab/rewards/profiles.py`](carla_rl_lab/rewards/profiles.py) |
 | 修改观测输入 | [`carla_rl_lab/observations/vector.py`](carla_rl_lab/observations/vector.py) |
 | 修改在线训练循环 | [`scripts/train.py`](scripts/train.py) |
@@ -310,11 +331,12 @@ python scripts/evaluate.py \
 | 数据来源 | 类型 | 算法 | 状态 |
 | --- | --- | --- | --- |
 | Online | Off-policy | SAC、TD3、DDPG | 已实现 |
-| Online | On-policy | PPO、A2C | 下一阶段独立 runner |
-| Offline | Offline RL | CQL、IQL、TD3+BC | 规划 dataset runner |
-| Expert / mixed | Imitation | BC、GAIL、AIRL | 规划中 |
+| Online | On-policy | PPO、A2C | 已实现 |
+| Offline | Offline RL | CQL、IQL、TD3+BC | 已实现 |
+| Expert / mixed | Imitation | BC、GAIL、AIRL | 已实现 |
 
-On-policy 与 offline 算法会使用独立的 rollout runner 和 dataset runner，不会为了增加算法数量而强行塞入当前 replay-buffer 循环。
+On-policy、offline 和 imitation 算法分别使用 rollout、dataset 和 mixed runner，
+不会强行塞入 replay-buffer 循环。
 
 ## 项目结构
 
@@ -330,6 +352,9 @@ carla_rl_lab/
   rewards/          # 普通奖励函数与 profile
 scripts/
   train.py           # 在线 off-policy 主循环
+  train_on_policy.py # 在线 rollout 主循环
+  train_offline.py   # 固定 dataset 主循环
+  train_imitation.py # 纯专家或专家/在线混合主循环
   evaluate.py        # 确定性评测入口
   launch_carla.sh    # 已记录的 CARLA 启动命令
 tests/               # 快速 CPU 冒烟测试
@@ -354,12 +379,12 @@ TensorBoard/W&B 和第一个固定 benchmark。后续工作按照实验可复现
 
 ### 2. 补全主流 RL 算法类型
 
-- [ ] Online on-policy：先实现 PPO，再实现 A2C，并使用独立 rollout buffer 和
+- [x] Online on-policy：先实现 PPO，再实现 A2C，并使用独立 rollout buffer 和
   runner。
-- [ ] Offline RL：先定义 dataset 格式，再通过独立 dataset runner 实现 TD3+BC、
+- [x] Offline RL：先定义 dataset 格式，再通过独立 dataset runner 实现 TD3+BC、
   CQL 和 IQL。
-- [ ] Imitation learning：先实现 BC，专家轨迹格式稳定后再评估 GAIL/AIRL。
-- [ ] 每个新算法必须同时提供 `act/update/save/load`、正确的 runner、默认配置、
+- [x] Imitation learning：先实现 BC，专家轨迹格式稳定后再评估 GAIL/AIRL。
+- [x] 每个新算法必须同时提供 `act/update/save/load`、正确的 runner、默认配置、
   CPU 冒烟测试和 CARLA 训练命令。
 
 ### 3. 实际训练每个算法并发布可复现 baseline

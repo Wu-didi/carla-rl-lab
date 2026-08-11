@@ -9,7 +9,7 @@ import numpy as np
 
 from carla_rl_lab.algorithms import create_agent, get_algorithm, list_algorithms
 from carla_rl_lab.benchmarks import get_benchmark, list_benchmarks
-from carla_rl_lab.buffers import ReplayBuffer
+from carla_rl_lab.buffers import OfflineDataset, ReplayBuffer, RolloutBuffer
 from carla_rl_lab.evaluation import evaluate_benchmark
 from carla_rl_lab.logging import ExperimentLogger
 from carla_rl_lab.observations import encode_observation
@@ -34,6 +34,24 @@ def tiny_config(state_dim=8, network="SAC"):
         td3_policy_noise=0.2,
         td3_noise_clip=0.5,
         td3_policy_delay=2,
+        policy_lr=1e-3,
+        max_grad_norm=0.5,
+        entropy_coef=0.01,
+        value_coef=0.5,
+        ppo_clip=0.2,
+        ppo_epochs=2,
+        ppo_minibatch_size=4,
+        gae_lambda=0.95,
+        td3_bc_alpha=2.5,
+        cql_alpha=1.0,
+        cql_temperature=1.0,
+        cql_num_random=2,
+        offline_entropy_alpha=0.2,
+        iql_expectile=0.7,
+        iql_beta=3.0,
+        iql_max_weight=100.0,
+        discriminator_lr=1e-3,
+        discriminator_updates=1,
     )
 
 
@@ -79,10 +97,15 @@ class FakeEnv:
 
 class CoreSmokeTest(unittest.TestCase):
     def test_registry_and_off_policy_algorithms(self):
-        self.assertEqual(list(list_algorithms()), ["ddpg", "sac", "td3"])
+        off_policy_algorithms = [
+            name
+            for name in list_algorithms()
+            if get_algorithm(name).runner == "off_policy"
+        ]
+        self.assertEqual(off_policy_algorithms, ["ddpg", "sac", "td3"])
         batch = random_batch(4, 8)
 
-        for name in list_algorithms():
+        for name in off_policy_algorithms:
             with self.subTest(algorithm=name):
                 spec = get_algorithm(name)
                 self.assertEqual(spec.data_source, "online")
@@ -110,6 +133,100 @@ class CoreSmokeTest(unittest.TestCase):
                         np.zeros(8, dtype=np.float32), deterministic=True
                     )
                     self.assertEqual(restored_action.shape, (3,))
+
+    def test_on_policy_algorithms(self):
+        cfg = tiny_config()
+        for name in ("a2c", "ppo"):
+            with self.subTest(algorithm=name):
+                spec = get_algorithm(name)
+                self.assertEqual(spec.runner, "on_policy")
+                agent = create_agent(name, cfg)
+                rollout = RolloutBuffer(8, gamma=0.99, gae_lambda=0.95)
+                for _ in range(8):
+                    state = np.random.randn(8).astype(np.float32)
+                    next_state = np.random.randn(8).astype(np.float32)
+                    action, log_prob, value = agent.act_with_info(state)
+                    rollout.add(
+                        state,
+                        action,
+                        1.0,
+                        False,
+                        value,
+                        log_prob,
+                        next_state,
+                    )
+                logs = agent.update(rollout.batch(last_value=0.0))
+                self.assertTrue(all(np.isfinite(float(value)) for value in logs.values()))
+                self._assert_checkpoint_roundtrip(name, agent, cfg)
+
+    def test_offline_algorithms(self):
+        cfg = tiny_config()
+        batch = random_batch(8, 8)
+        for name in ("cql", "iql", "td3_bc"):
+            with self.subTest(algorithm=name):
+                spec = get_algorithm(name)
+                self.assertEqual(spec.runner, "offline")
+                agent = create_agent(name, cfg)
+                logs = agent.update(batch)
+                self.assertTrue(all(np.isfinite(float(value)) for value in logs.values()))
+                self._assert_checkpoint_roundtrip(name, agent, cfg)
+
+    def test_imitation_algorithms(self):
+        cfg = tiny_config()
+        expert_batch = random_batch(8, 8)
+        bc_agent = create_agent("bc", cfg)
+        bc_logs = bc_agent.update(expert_batch)
+        self.assertTrue(all(np.isfinite(float(value)) for value in bc_logs.values()))
+        self._assert_checkpoint_roundtrip("bc", bc_agent, cfg)
+
+        for name in ("gail", "airl"):
+            with self.subTest(algorithm=name):
+                agent = create_agent(name, cfg)
+                rollout = RolloutBuffer(8, gamma=0.99, gae_lambda=0.95)
+                for index in range(8):
+                    state = np.random.randn(8).astype(np.float32)
+                    next_state = np.random.randn(8).astype(np.float32)
+                    action, log_prob, value = agent.act_with_info(state)
+                    rollout.add(
+                        state,
+                        action,
+                        0.0,
+                        False,
+                        value,
+                        log_prob,
+                        next_state,
+                    )
+                batch = rollout.batch(last_value=0.0)
+                batch["expert_states"] = expert_batch["states"]
+                batch["expert_actions"] = expert_batch["actions"]
+                batch["expert_next_states"] = expert_batch["next_states"]
+                logs = agent.update(batch)
+                self.assertTrue(all(np.isfinite(float(value)) for value in logs.values()))
+                self._assert_checkpoint_roundtrip(name, agent, cfg)
+
+    def test_offline_dataset_roundtrip(self):
+        source = random_batch(6, 8)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "expert.npz")
+            dataset = OfflineDataset(source, seed=7)
+            dataset.save(path)
+            restored = OfflineDataset.load(path, seed=7)
+            self.assertEqual(len(restored), 6)
+            self.assertEqual(restored.state_dim, 8)
+            self.assertEqual(restored.action_dim, 3)
+            self.assertEqual(restored.sample(4)["states"].shape, (4, 8))
+
+    def _assert_checkpoint_roundtrip(self, name, agent, cfg):
+        with tempfile.TemporaryDirectory() as checkpoint_dir:
+            agent.save(checkpoint_dir, "smoke")
+            checkpoint_path = os.path.join(
+                checkpoint_dir, "{}_ckpt_smoke.pt".format(name)
+            )
+            self.assertTrue(os.path.isfile(checkpoint_path))
+            restored = create_agent(name, cfg)
+            restored.load(checkpoint_path)
+            action = restored.act(np.zeros(8, dtype=np.float32), deterministic=True)
+            self.assertEqual(action.shape, (3,))
 
     def test_attention_sac(self):
         cfg = tiny_config(state_dim=299, network="Attention_SAC")

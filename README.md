@@ -9,7 +9,7 @@
   <a href="https://github.com/Wu-didi/carla-rl-lab"><img alt="Version" src="https://img.shields.io/badge/version-0.1.0-2563eb?style=for-the-badge"></a>
   <a href="https://www.python.org/"><img alt="Python 3.7" src="https://img.shields.io/badge/Python-3.7-3776ab?style=for-the-badge&amp;logo=python&amp;logoColor=white"></a>
   <a href="https://carla.org/"><img alt="CARLA 0.9.13 and 0.9.15" src="https://img.shields.io/badge/CARLA-0.9.13%20%7C%200.9.15-e11d48?style=for-the-badge"></a>
-  <a href="#algorithm-scope"><img alt="SAC, TD3 and DDPG" src="https://img.shields.io/badge/RL-SAC%20%7C%20TD3%20%7C%20DDPG-059669?style=for-the-badge"></a>
+  <a href="#algorithm-scope"><img alt="11 RL algorithms" src="https://img.shields.io/badge/RL-11%20algorithms-059669?style=for-the-badge"></a>
 </p>
 
 <p align="center">
@@ -28,14 +28,16 @@
 </p>
 
 > [!IMPORTANT]
-> CarlaRLLab is not an SB3 wrapper. The policy networks, update equations, rewards, training loop, logs, and benchmark protocol stay visible and editable. Version 0.1 is intentionally small: one reliable online off-policy path before more RL families are added.
+> CarlaRLLab is not an SB3 wrapper. The policy networks, update equations,
+> rewards, training loops, logs, and benchmark protocol stay visible and
+> editable. Each data source has one small, explicit runner.
 
 ## What Is Ready
 
 | Research surface | Version 0.1 |
 | --- | --- |
-| Algorithms | SAC, TD3, DDPG |
-| Policy networks | MLP SAC, semantic-attention SAC, deterministic actor-critic |
+| Algorithms | SAC, TD3, DDPG, PPO, A2C, TD3+BC, CQL, IQL, BC, GAIL, AIRL |
+| Policy networks | Gaussian and deterministic actor-critic, semantic-attention SAC |
 | CARLA versions | 0.9.13 documented; 0.9.15 code-compatible, formal validation pending |
 | CARLA control | Throttle, steering, brake |
 | Rewards | Legacy reward and editable `research_v1` function |
@@ -43,24 +45,25 @@
 | Benchmark | Reproducible `lane_following_v0` protocol and JSON report |
 | Validation | CPU smoke tests for every algorithm, reward, logger, and evaluator |
 
-## One Training Path
+## Explicit Training Paths
 
 ```mermaid
 flowchart LR
-    A[CARLA] --> B[Observation dict]
-    B --> C[encode_observation]
-    C --> D[Agent: act]
-    D --> A
-    A --> E[Reward function]
-    E --> F[ReplayBuffer]
-    F --> G[Agent: update]
-    G --> H["TensorBoard / W&B"]
-    G --> I[Checkpoint]
-    I --> J[Fixed benchmark]
-    J --> K[JSON report]
+    A[CARLA] --> B[Observation + reward]
+    B --> C[ReplayBuffer: SAC / TD3 / DDPG]
+    B --> D[RolloutBuffer: PPO / A2C]
+    E[Fixed dataset] --> F[TD3+BC / CQL / IQL / BC]
+    E --> G[GAIL / AIRL]
+    B --> G
+    C --> H[Agent update]
+    D --> H
+    F --> H
+    G --> H
+    H --> I[Logs + checkpoint + benchmark]
 ```
 
-There is no trainer hierarchy and no chain of reward classes. Stateless research logic is implemented as plain functions; classes are reserved for objects that actually own state.
+There is no trainer hierarchy and no chain of reward classes. The four runners
+only differ where their data flow differs.
 
 ## Quick Start
 
@@ -242,9 +245,25 @@ python scripts/train.py --algo td3 --reward research_v1 --logger both --wandb-mo
 
 # Resume DDPG from a checkpoint
 python scripts/train.py --algo ddpg --checkpoint /path/to/ddpg_ckpt.pt
+
+# PPO or A2C collect fresh rollouts from CARLA
+python scripts/train_on_policy.py --algo ppo --total-timesteps 1000000
+
+# Offline RL consumes a fixed five-field .npz transition dataset
+python scripts/train_offline.py --algo td3_bc --dataset /path/to/transitions.npz
+python scripts/train_offline.py --algo cql --dataset /path/to/transitions.npz
+python scripts/train_offline.py --algo iql --dataset /path/to/transitions.npz
+
+# BC accepts states/actions; GAIL and AIRL also collect policy rollouts in CARLA
+python scripts/train_imitation.py --algo bc --expert-dataset /path/to/expert.npz
+python scripts/train_imitation.py --algo gail --expert-dataset /path/to/expert.npz
+python scripts/train_imitation.py --algo airl --expert-dataset /path/to/expert.npz
 ```
 
 Runs are stored under `artifacts/runs/<run-name>/` and are ignored by Git.
+Offline transition datasets are `.npz` files containing `states`, `actions`,
+`rewards`, `next_states`, and `dones`. BC and GAIL only require `states` and
+`actions`; AIRL requires the full transition format.
 
 ## Edit The Research Code
 
@@ -254,6 +273,9 @@ The main extension points are deliberately direct:
 | --- | --- |
 | Change SAC or its attention model | [`carla_rl_lab/algorithms/sac.py`](carla_rl_lab/algorithms/sac.py) |
 | Change TD3 / DDPG | [`carla_rl_lab/algorithms/td3.py`](carla_rl_lab/algorithms/td3.py) / [`ddpg.py`](carla_rl_lab/algorithms/ddpg.py) |
+| Change PPO / A2C | [`carla_rl_lab/algorithms/on_policy.py`](carla_rl_lab/algorithms/on_policy.py) |
+| Change offline RL | [`carla_rl_lab/algorithms/offline.py`](carla_rl_lab/algorithms/offline.py) |
+| Change imitation learning | [`carla_rl_lab/algorithms/imitation.py`](carla_rl_lab/algorithms/imitation.py) |
 | Design a reward | [`carla_rl_lab/rewards/profiles.py`](carla_rl_lab/rewards/profiles.py) |
 | Change observation inputs | [`carla_rl_lab/observations/vector.py`](carla_rl_lab/observations/vector.py) |
 | Change the online loop | [`scripts/train.py`](scripts/train.py) |
@@ -313,11 +335,12 @@ The report contains return, cost, speed, episode length, collision rate, off-roa
 | Data source | Family | Algorithms | Status |
 | --- | --- | --- | --- |
 | Online | Off-policy | SAC, TD3, DDPG | Ready |
-| Online | On-policy | PPO, A2C | Next runner |
-| Offline | Offline RL | CQL, IQL, TD3+BC | Planned dataset runner |
-| Expert / mixed | Imitation | BC, GAIL, AIRL | Planned |
+| Online | On-policy | PPO, A2C | Ready |
+| Offline | Offline RL | CQL, IQL, TD3+BC | Ready |
+| Expert / mixed | Imitation | BC, GAIL, AIRL | Ready |
 
-On-policy and offline methods will get dedicated rollout and dataset runners. They will not be forced into the existing replay-buffer loop simply to claim a longer algorithm list.
+On-policy, offline, and imitation methods use dedicated rollout, dataset, and
+mixed runners instead of being forced into the replay-buffer loop.
 
 ## Project Layout
 
@@ -333,6 +356,9 @@ carla_rl_lab/
   rewards/          # Plain reward functions and profiles
 scripts/
   train.py           # Online off-policy loop
+  train_on_policy.py # Online rollout loop
+  train_offline.py   # Fixed-dataset loop
+  train_imitation.py # Expert-only or expert/online mixed loop
   evaluate.py        # Deterministic benchmark entry point
   launch_carla.sh    # Remembered CARLA launch commands
 tests/               # Fast CPU smoke tests
@@ -359,13 +385,13 @@ length of the algorithm list.
 
 ### 2. Complete the main RL algorithm families
 
-- [ ] Online on-policy: implement PPO first, then A2C, with a dedicated rollout
+- [x] Online on-policy: implement PPO first, then A2C, with a dedicated rollout
   buffer and runner.
-- [ ] Offline RL: define the dataset format, then implement TD3+BC, CQL, and IQL
+- [x] Offline RL: define the dataset format, then implement TD3+BC, CQL, and IQL
   with a dedicated dataset runner.
-- [ ] Imitation learning: add BC first, then evaluate GAIL/AIRL after the expert
+- [x] Imitation learning: add BC first, then evaluate GAIL/AIRL after the expert
   trajectory format is stable.
-- [ ] Require every new algorithm to provide `act/update/save/load`, the correct
+- [x] Require every new algorithm to provide `act/update/save/load`, the correct
   runner, a default config, a CPU smoke test, and a CARLA training command.
 
 ### 3. Train every algorithm and publish reproducible baselines

@@ -1,14 +1,14 @@
 # Architecture
 
-CarlaRLLab keeps one visible training path and separates only the research
-concerns that change independently.
+CarlaRLLab keeps each training path visible and separates only data flows that
+genuinely update at different times.
 
 ```text
 Benchmark spec
     -> environment configuration
     -> observation function
     -> algorithm and network
-    -> replay-buffer loop
+    -> replay, rollout, dataset, or mixed loop
     -> logger and benchmark function
 ```
 

@@ -12,6 +12,7 @@ requires-python = ">=3.7"
 dependencies = [
   "gym==0.26.2",
   "gymnasium==0.28.1",
+  "matplotlib==3.5.3",
   "numpy==1.21.6",
   "opencv-python==4.8.1.78",
   "Pillow==9.5.0",

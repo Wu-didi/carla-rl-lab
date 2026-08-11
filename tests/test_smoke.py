@@ -282,6 +282,34 @@ class CoreSmokeTest(unittest.TestCase):
         self.assertIn("reward/speed_tracking", terms)
         self.assertIn("reward/collision", terms)
 
+    def test_research_v2_penalizes_idle_without_rewarding_early_failure(self):
+        obs = vector_observation()
+        reward_fn = build_reward_profile("research_v2", desired_speed=8.0)
+
+        idle_reward, idle_terms = reward_fn(
+            obs,
+            False,
+            {"is_collision": False, "is_off_road": False},
+        )
+        self.assertAlmostEqual(idle_reward, -0.2)
+        self.assertAlmostEqual(idle_terms["reward/idle"], -0.2)
+
+        obs["ego_state"][3] = 8.0
+        moving_reward, moving_terms = reward_fn(
+            obs,
+            False,
+            {"is_collision": False, "is_off_road": False},
+        )
+        self.assertAlmostEqual(moving_reward, 10.0)
+        self.assertAlmostEqual(moving_terms["reward/progress"], 2.0)
+
+        collision_reward, _ = reward_fn(
+            obs,
+            True,
+            {"is_collision": True, "is_off_road": False},
+        )
+        self.assertAlmostEqual(collision_reward, -190.0)
+
     def test_tensorboard_logger(self):
         with tempfile.TemporaryDirectory() as log_dir:
             logger = ExperimentLogger("tensorboard", log_dir, {"algorithm": "sac"})

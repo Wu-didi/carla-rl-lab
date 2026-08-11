@@ -23,6 +23,7 @@
 <p align="center">
   <a href="README.md">English</a> |
   <a href="README_zh-CN.md">简体中文</a> |
+  <a href="docs/algorithms/README.md">算法指南</a> |
   <a href="docs/architecture.md">架构说明</a> |
   <a href="https://github.com/Wu-didi/carla-rl-lab/issues">提交问题</a>
 </p>
@@ -39,7 +40,7 @@
 | 策略网络 | Gaussian 与确定性 Actor-Critic、语义注意力 SAC |
 | CARLA 版本 | 0.9.13 已有文档；0.9.15 connection/reset/step 已验证，完整 benchmark 待完成 |
 | CARLA 控制 | 明确的 `signed_3d` 与 `longitudinal_2d` policy action space |
-| 奖励 | 原始 legacy reward、可直接修改的 `research_v1` 函数 |
+| 奖励 | 原始 reward、可复现的 `research_v1` 与防静止塌缩的 `research_v2` |
 | 日志 | TensorBoard、W&B 在线/离线、reward 分项日志 |
 | Benchmark | 论文标准评测启动器与轻量内部 suite |
 | 验证 | CPU 更新与回归测试；真实 CARLA 收敛验证仍待完成 |
@@ -236,8 +237,8 @@ python -m unittest discover -s tests -v
 # SAC + 原始奖励
 python scripts/train.py --algo sac --reward legacy --logger tensorboard
 
-# TD3 + 可分解科研奖励 + 两种日志后端
-python scripts/train.py --algo td3 --reward research_v1 --logger both --wandb-mode offline
+# TD3 + 防静止塌缩科研奖励 + 两种日志后端
+python scripts/train.py --algo td3 --reward research_v2 --logger both --wandb-mode offline
 
 # 从 checkpoint 恢复 DDPG
 python scripts/train.py --algo ddpg --checkpoint /path/to/ddpg_ckpt.pt
@@ -320,7 +321,8 @@ python scripts/train.py --algo sac --action-mode longitudinal_2d
 | 修改在线训练循环 | [`scripts/train.py`](scripts/train.py) |
 | 定义 benchmark | [`carla_rl_lab/benchmarks/specs.py`](carla_rl_lab/benchmarks/specs.py) |
 
-奖励路径就是一个普通 Python 函数：
+奖励路径就是一个普通 Python 函数。reward 名称采用版本化管理，修改公式不会静默改变
+旧实验：
 
 ```python
 def research_v1_reward(obs, done, info, desired_speed):
@@ -334,6 +336,9 @@ def research_v1_reward(obs, done, info, desired_speed):
 
 每个奖励项都会写入 TensorBoard 和 W&B，奖励修改的影响不必只靠一条总 return 曲线猜测。
 
+每个已实现算法的原理、公式到源码的对应关系、启动命令、关键指标和当前实验结果统一收录
+在 [`算法指南`](docs/algorithms/README.md) 中。
+
 ## 实验日志
 
 ```bash
@@ -346,6 +351,21 @@ python scripts/train.py --algo sac --logger wandb --wandb-mode online
 ```
 
 日志包含 actor/critic loss、entropy、Q 值、episode return、safety cost、episode 长度、油门/方向/刹车分布、注意力热图和 reward 分项。
+
+### 最新 Pilot 结果
+
+第一次 SAC pilot 使用 `research_v1`、seed 0，在 CARLA 0.9.15 中训练 10k steps，
+并完成 `lane_following_v0` 全部 5 个评测 seed。策略虽然都运行到 500-step horizon，
+但学会了静止：平均速度仅 `0.021 m/s`，静止率 `97.12%`，成功率 `0%`。该负结果会
+完整保留，不会隐藏；它直接推动了版本化 `research_v2` reward，然后才扩大训练规模。
+
+<p align="center">
+  <img alt="SAC pilot episode return" width="49%" src="docs/results/sac_research_v1_seed0_10k/episode_reward.png">
+  <img alt="SAC pilot losses" width="49%" src="docs/results/sac_research_v1_seed0_10k/training_losses.png">
+</p>
+
+曲线源数据、完整配置、checkpoint SHA-256、逐 seed benchmark 结果与 CARLA 版本位于
+[`docs/results/sac_research_v1_seed0_10k`](docs/results/sac_research_v1_seed0_10k/)。
 
 ## Benchmark
 
@@ -427,6 +447,7 @@ scripts/
   collect_dataset.py # 带版本的 random/autopilot 数据采集
   smoke_carla.py     # 真实 server connection/reset/step 冒烟
   run_research_smoke.sh # SAC/PPO/BC/TD3+BC 集成冒烟
+  export_curves.py   # TensorBoard 到 CSV/JSON/PNG 结果导出器
   evaluate.py        # 轻量确定性评测入口
   evaluate_paper.py  # 官方 Leaderboard/Bench2Drive 预检与启动入口
   launch_carla.sh    # 已记录的 CARLA 启动命令
@@ -485,7 +506,7 @@ TensorBoard/W&B 和第一个固定 benchmark。后续工作按照实验可复现
 
 ### 5. 为每个 RL 算法编写详细教程
 
-- [ ] 每个已实现算法增加一份 `docs/algorithms/<algorithm>.md`。
+- [x] 每个已实现算法增加一份 `docs/algorithms/<algorithm>.md`。
 - [ ] 讲清论文与目标函数、关键公式、网络结构、replay/rollout 数据流，以及公式到
   源码行的准确对应关系。
 - [ ] 包含安装、训练、断点恢复、评测、checkpoint 下载、预期指标/曲线、超参数建议

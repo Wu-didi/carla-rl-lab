@@ -23,6 +23,7 @@
 <p align="center">
   <a href="README.md">English</a> |
   <a href="README_zh-CN.md">简体中文</a> |
+  <a href="docs/algorithms/README.md">Algorithm Guides</a> |
   <a href="docs/architecture.md">Architecture</a> |
   <a href="https://github.com/Wu-didi/carla-rl-lab/issues">Report an issue</a>
 </p>
@@ -40,7 +41,7 @@
 | Policy networks | Gaussian and deterministic actor-critic, semantic-attention SAC |
 | CARLA versions | 0.9.13 documented; 0.9.15 connection/reset/step verified, full benchmark pending |
 | CARLA control | Explicit `signed_3d` and `longitudinal_2d` policy action spaces |
-| Rewards | Legacy reward and editable `research_v1` function |
+| Rewards | Legacy, reproducible `research_v1`, and progress-aware `research_v2` |
 | Tracking | TensorBoard, W&B online/offline, per-term reward logs |
 | Benchmark | Paper-standard launchers plus a lightweight internal suite |
 | Validation | CPU update/regression tests; CARLA convergence validation is still pending |
@@ -240,8 +241,8 @@ ready. Continue to the training commands below.
 # SAC with the original reward
 python scripts/train.py --algo sac --reward legacy --logger tensorboard
 
-# TD3 with decomposed research rewards and both logging backends
-python scripts/train.py --algo td3 --reward research_v1 --logger both --wandb-mode offline
+# TD3 with progress-aware research rewards and both logging backends
+python scripts/train.py --algo td3 --reward research_v2 --logger both --wandb-mode offline
 
 # Resume DDPG from a checkpoint
 python scripts/train.py --algo ddpg --checkpoint /path/to/ddpg_ckpt.pt
@@ -328,7 +329,8 @@ The main extension points are deliberately direct:
 | Change the online loop | [`scripts/train.py`](scripts/train.py) |
 | Define a benchmark | [`carla_rl_lab/benchmarks/specs.py`](carla_rl_lab/benchmarks/specs.py) |
 
-The editable reward path is a normal Python function:
+The editable reward path is a normal Python function. Reward names are
+versioned so a changed formula cannot silently alter an old experiment:
 
 ```python
 def research_v1_reward(obs, done, info, desired_speed):
@@ -342,6 +344,10 @@ def research_v1_reward(obs, done, info, desired_speed):
 
 Every term is available in TensorBoard and W&B, so reward changes can be inspected instead of inferred from a single return curve.
 
+Detailed principles, source mappings, launch commands, expected metrics, and
+current results for every implemented method are indexed in the
+[`Algorithm Guides`](docs/algorithms/README.md).
+
 ## Experiment Tracking
 
 ```bash
@@ -354,6 +360,23 @@ python scripts/train.py --algo sac --logger wandb --wandb-mode online
 ```
 
 Logged signals include actor/critic losses, entropy and Q statistics, episode return, safety cost, episode length, throttle/steering/brake distributions, attention heatmaps, and reward decomposition.
+
+### Latest Recorded Pilot
+
+The first SAC pilot used `research_v1`, seed 0, 10k CARLA 0.9.15 steps, and all
+five `lane_following_v0` evaluation seeds. It reached every 500-step horizon but
+learned to remain stationary: mean speed `0.021 m/s`, stationary rate `97.12%`,
+and success rate `0%`. This negative result is retained rather than hidden; it
+motivated the versioned `research_v2` reward before scaling training.
+
+<p align="center">
+  <img alt="SAC pilot episode return" width="49%" src="docs/results/sac_research_v1_seed0_10k/episode_reward.png">
+  <img alt="SAC pilot losses" width="49%" src="docs/results/sac_research_v1_seed0_10k/training_losses.png">
+</p>
+
+The plot source data, full config, checkpoint SHA-256, per-seed benchmark rows,
+and CARLA versions are stored in
+[`docs/results/sac_research_v1_seed0_10k`](docs/results/sac_research_v1_seed0_10k/).
 
 ## Benchmark
 
@@ -436,6 +459,7 @@ scripts/
   collect_dataset.py # Versioned random/autopilot dataset collection
   smoke_carla.py     # Real server connection/reset/step smoke
   run_research_smoke.sh # SAC/PPO/BC/TD3+BC integration smoke
+  export_curves.py   # TensorBoard to CSV/JSON/PNG result exporter
   evaluate.py        # Lightweight deterministic benchmark entry point
   evaluate_paper.py  # Official Leaderboard/Bench2Drive preflight + launcher
   launch_carla.sh    # Remembered CARLA launch commands
@@ -499,7 +523,7 @@ length of the algorithm list.
 
 ### 5. Write a detailed tutorial for every algorithm
 
-- [ ] Add `docs/algorithms/<algorithm>.md` for each implemented method.
+- [x] Add `docs/algorithms/<algorithm>.md` for each implemented method.
 - [ ] Cover the paper and objective, key equations, network structure, replay or
   rollout data flow, and the exact mapping from equations to source code.
 - [ ] Include installation, training, resume, evaluation, checkpoint download,

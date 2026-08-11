@@ -51,7 +51,7 @@ The first publishable baseline should hold these choices fixed:
 | CARLA | 0.9.15 |
 | Training town | Town05 |
 | Action representation | `longitudinal_2d` |
-| Reward | `research_v1` |
+| Reward | `research_v2` for new runs; always record the exact version |
 | Training seeds | 0, 1, 2 |
 | Evaluation protocol | `lane_following_v0` |
 | Evaluation seeds | 0, 1, 2, 3, 4 |
@@ -62,6 +62,10 @@ client/server versions, full config, dataset metadata when applicable, hardware,
 wall-clock training time, and all random seeds. Do not compare algorithms using
 different observations, action modes, reward profiles, traffic settings, or
 evaluation horizons without labeling the comparison as an ablation.
+
+`research_v1` remains available because the first SAC 10k pilot used it and
+produced a documented stationary policy with 0% success. New baseline runs use
+`research_v2`; results from the two reward versions must never be aggregated.
 
 ## Reporting
 

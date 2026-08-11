@@ -7,17 +7,18 @@ import numpy as np
 
 SIGNED_3D = "signed_3d"
 LONGITUDINAL_2D = "longitudinal_2d"
-ACTION_MODES = (SIGNED_3D, LONGITUDINAL_2D)
+TARGET_SPEED_2D = "target_speed_2d"
+ACTION_MODES = (SIGNED_3D, LONGITUDINAL_2D, TARGET_SPEED_2D)
 
 
 def validate_action_spec(action_mode: str, action_dim: int) -> None:
-    expected_dim = 3 if action_mode == SIGNED_3D else 2
     if action_mode not in ACTION_MODES:
         raise ValueError(
             "unknown action_mode '{}'; choose from {}".format(
                 action_mode, ", ".join(ACTION_MODES)
             )
         )
+    expected_dim = 3 if action_mode == SIGNED_3D else 2
     if int(action_dim) != expected_dim:
         raise ValueError(
             "action_mode '{}' requires action_dim={}, got {}".format(
@@ -36,7 +37,7 @@ def policy_action_to_carla(
     if action_bound <= 0.0:
         raise ValueError("action_bound must be positive")
     unit = np.clip(array / float(action_bound), -1.0, 1.0)
-    if action_mode == LONGITUDINAL_2D:
+    if action_mode in (LONGITUDINAL_2D, TARGET_SPEED_2D):
         longitudinal, steer = unit
         throttle = max(float(longitudinal), 0.0)
         steer = float(steer)
@@ -62,7 +63,7 @@ def carla_action_to_policy(
     throttle = float(np.clip(throttle, 0.0, 1.0))
     steer = float(np.clip(steer, -1.0, 1.0))
     brake = float(np.clip(brake, 0.0, 1.0))
-    if action_mode == LONGITUDINAL_2D:
+    if action_mode in (LONGITUDINAL_2D, TARGET_SPEED_2D):
         validate_action_spec(action_mode, 2)
         unit = np.array([throttle - brake, steer], dtype=np.float32)
     else:

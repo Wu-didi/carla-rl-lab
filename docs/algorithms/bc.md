@@ -21,16 +21,15 @@ closed-loop CARLA evaluation therefore matter more than training loss alone.
 
 ```bash
 python scripts/collect_dataset.py \
+  --benchmark nocrash_train_empty_v0 \
   --policy autopilot --transitions 100000 \
-  --output artifacts/datasets/v0.1/town05_autopilot_seed0_100k.npz \
-  --town Town05 --vehicles 50 --walkers 0 --traffic off --view-mode none \
-  --action-mode longitudinal_2d --reward research_v2 --seed 0
+  --output artifacts/datasets/nocrash_expert_seed0_100k.npz --seed 0
 
 python scripts/train_imitation.py \
   --algo bc \
-  --expert-dataset artifacts/datasets/v0.1/town05_autopilot_seed0_100k.npz \
+  --expert-dataset artifacts/datasets/nocrash_expert_seed0_100k.npz \
   --updates 100000 --batch-size 256 --checkpoint-interval 10000 \
-  --seed 0 --logger tensorboard --run-name v0.1/bc_town05_seed0
+  --seed 0 --logger tensorboard --run-name nocrash/bc_mlp_seed0
 ```
 
 ## Metrics And Results
@@ -39,3 +38,4 @@ Plot `bc_loss` and mean absolute `action_error`, then evaluate return, success,
 distance, stationary rate, and action distributions in CARLA. A four-update
 CARLA 0.9.15 dataset integration smoke passed and produced a checkpoint. It is
 not a driving result; formal training and curves are **Pending**.
+The current BC actor is an MLP; pixel-native BC remains pending.

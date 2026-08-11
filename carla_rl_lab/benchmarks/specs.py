@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, Tuple
 
+from carla_rl_lab.benchmarks.nocrash import bundled_route_file
+
 
 _SEEDS = (0, 1, 2, 3, 4)
 _BASE_OVERRIDES = {
@@ -12,9 +14,60 @@ _BASE_OVERRIDES = {
     "desired_speed": 8.0,
     "view_mode": "none",
     "visualize_waypoints": False,
-    "reward_profile": "research_v1",
+    "reward_profile": "nocrash_v0",
     "weather": "ClearNoon",
 }
+
+
+def _nocrash_benchmark(
+    name: str,
+    town: str,
+    traffic_density: str,
+    vehicles: int,
+    walkers: int,
+    weather_group: str,
+    route_mode: str,
+) -> Dict[str, Any]:
+    training = town == "Town01"
+    return {
+        "name": name,
+        "description": (
+            "CARLA 0.9.15 adaptation of NoCrash {} traffic in {}."
+        ).format(traffic_density, town),
+        "category": "nocrash",
+        "seeds": (0,),
+        "success_reasons": ("route_completed",),
+        "success_criteria": {
+            "min_horizon_fraction": 0.0,
+            "min_distance_m": 0.0,
+            "max_stationary_rate": 0.5,
+        },
+        "route_ids": tuple(range(25)),
+        "weather_presets": (
+            ("ClearNoon", "WetNoon", "HardRainNoon", "ClearSunset")
+            if training
+            else ("SoftRainSunset", "WetSunset")
+        ),
+        "traffic_density": traffic_density,
+        "env_overrides": {
+            "town": town,
+            "number_of_vehicles": vehicles,
+            "number_of_walkers": walkers,
+            "traffic": "on",
+            "max_time_episode": 1200,
+            "desired_speed": 5.0,
+            "view_mode": "none",
+            "visualize_waypoints": False,
+            "reward_profile": "nocrash_v0",
+            "weather_group": weather_group,
+            "route_file": bundled_route_file(town),
+            "route_id": -1,
+            "route_mode": route_mode,
+            "action_mode": "target_speed_2d",
+            "action_dim": 2,
+            "observation_mode": "pixel_v1",
+        },
+    }
 
 
 def _benchmark(
@@ -50,6 +103,33 @@ def _benchmark(
 
 
 _BENCHMARKS = {
+    "nocrash_train_empty_v0": _nocrash_benchmark(
+        "nocrash_train_empty_v0",
+        "Town01",
+        "empty",
+        0,
+        0,
+        "nocrash_train",
+        "endless",
+    ),
+    "nocrash_train_v0": _nocrash_benchmark(
+        "nocrash_train_v0",
+        "Town01",
+        "regular",
+        20,
+        50,
+        "nocrash_train",
+        "endless",
+    ),
+    "nocrash_empty_v0": _nocrash_benchmark(
+        "nocrash_empty_v0", "Town02", "empty", 0, 0, "nocrash_test", "fixed"
+    ),
+    "nocrash_regular_v0": _nocrash_benchmark(
+        "nocrash_regular_v0", "Town02", "regular", 15, 50, "nocrash_test", "fixed"
+    ),
+    "nocrash_dense_v0": _nocrash_benchmark(
+        "nocrash_dense_v0", "Town02", "dense", 70, 150, "nocrash_test", "fixed"
+    ),
     "lane_following_empty_v0": _benchmark(
         "lane_following_empty_v0",
         "Town05 lane-following sanity check without dynamic traffic.",
@@ -122,6 +202,11 @@ _BENCHMARK_SUITES = {
     "carla_lightweight_v0": _LIGHTWEIGHT_SUITE,
     # Kept as a compatibility alias. It is not an official CARLA paper suite.
     "carla_common_v0": _LIGHTWEIGHT_SUITE,
+    "nocrash_0915_v0": (
+        "nocrash_empty_v0",
+        "nocrash_regular_v0",
+        "nocrash_dense_v0",
+    ),
 }
 
 

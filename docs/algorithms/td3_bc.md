@@ -22,16 +22,15 @@ soft target updates follow TD3. No new CARLA data is collected during updates.
 
 ```bash
 python scripts/collect_dataset.py \
+  --benchmark nocrash_train_empty_v0 \
   --policy autopilot --transitions 100000 \
-  --output artifacts/datasets/v0.1/town05_autopilot_seed0_100k.npz \
-  --town Town05 --vehicles 50 --walkers 0 --traffic off --view-mode none \
-  --action-mode longitudinal_2d --reward research_v2 --seed 0
+  --output artifacts/datasets/nocrash_expert_seed0_100k.npz --seed 0
 
 python scripts/train_offline.py \
   --algo td3_bc \
-  --dataset artifacts/datasets/v0.1/town05_autopilot_seed0_100k.npz \
+  --dataset artifacts/datasets/nocrash_expert_seed0_100k.npz \
   --updates 100000 --batch-size 256 --checkpoint-interval 10000 \
-  --seed 0 --logger tensorboard --run-name v0.1/td3_bc_town05_seed0
+  --seed 0 --logger tensorboard --run-name nocrash/td3_bc_mlp_seed0
 ```
 
 ## Metrics And Results
@@ -41,3 +40,4 @@ Inspect twin critic losses, delayed `actor_loss`, `bc_loss`, and
 BC term does not imply improved driving. A four-update CARLA-dataset integration
 smoke completed with valid TensorBoard logs and checkpoint. Formal dataset
 training, evaluation, and curves are **Pending**.
+The current actor/critics are MLPs; a pixel-native offline baseline is pending.

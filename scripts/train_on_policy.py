@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from carla_rl_lab.algorithms import create_agent, get_algorithm, list_algorithms
 from carla_rl_lab.buffers import RolloutBuffer
+from carla_rl_lab.benchmarks import apply_benchmark, get_benchmark, list_benchmarks
 from carla_rl_lab.config import Config
 from carla_rl_lab.envs import ACTION_MODES, make_carla_env
 from carla_rl_lab.logging import action_metrics, build_experiment_logger
@@ -66,9 +67,7 @@ def train(cfg: Config) -> None:
             episode_index = int(trainer_state.get("episode_index", 0))
 
         observation = env.reset(seed=cfg.seed + episode_index)
-        state = encode_observation(
-            observation, cfg.state_dim, cfg.risk_field_sectors
-        )
+        state = encode_observation(observation, cfg.state_dim)
         episode_return = 0.0
         episode_cost = 0.0
         episode_length = 0
@@ -95,17 +94,13 @@ def train(cfg: Config) -> None:
                     last_done = True
                     episode_index += 1
                     observation = env.reset(seed=cfg.seed + episode_index)
-                    state = encode_observation(
-                        observation, cfg.state_dim, cfg.risk_field_sectors
-                    )
+                    state = encode_observation(observation, cfg.state_dim)
                     episode_return = 0.0
                     episode_cost = 0.0
                     episode_length = 0
                     continue
                 consecutive_step_failures = 0
-                next_state = encode_observation(
-                    next_observation, cfg.state_dim, cfg.risk_field_sectors
-                )
+                next_state = encode_observation(next_observation, cfg.state_dim)
                 terminal = bool(
                     done and info.get("termination_reason") != "timeout"
                 )
@@ -148,9 +143,7 @@ def train(cfg: Config) -> None:
                     episode_cost = 0.0
                     episode_length = 0
                     observation = env.reset(seed=cfg.seed + episode_index)
-                    state = encode_observation(
-                        observation, cfg.state_dim, cfg.risk_field_sectors
-                    )
+                    state = encode_observation(observation, cfg.state_dim)
                 if global_step >= cfg.total_timesteps:
                     break
 
@@ -194,6 +187,7 @@ def train(cfg: Config) -> None:
 def build_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CarlaRLLab on-policy trainer")
     parser.add_argument("--algorithm", "--algo", choices=on_policy_algorithms(), default=None)
+    parser.add_argument("--benchmark", choices=list(list_benchmarks()), default=None)
     parser.add_argument("--town", default=None)
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--total-timesteps", type=int, default=None)
@@ -234,11 +228,13 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         saved_algorithm = checkpoint_metadata(args.checkpoint).get("algorithm")
         if args.algorithm and saved_algorithm and args.algorithm != saved_algorithm:
             raise ValueError("algorithm does not match checkpoint metadata")
+    if args.benchmark:
+        apply_benchmark(cfg, get_benchmark(args.benchmark))
     for name, value in vars(args).items():
-        if name != "checkpoint" and value is not None:
+        if name not in ("benchmark", "checkpoint") and value is not None:
             setattr(cfg, name, value)
     if args.action_mode is not None:
-        cfg.action_dim = 2 if cfg.action_mode == "longitudinal_2d" else 3
+        cfg.action_dim = 3 if cfg.action_mode == "signed_3d" else 2
     cfg.pretrained_model_path = args.checkpoint
     cfg.use_pretrained_model = bool(args.checkpoint)
     return cfg

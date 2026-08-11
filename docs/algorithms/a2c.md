@@ -22,14 +22,14 @@ rollout variance and learning rate.
 
 ```bash
 python scripts/train_on_policy.py \
+  --benchmark nocrash_train_empty_v0 \
   --algo a2c --total-timesteps 100000 --rollout-steps 2048 \
-  --checkpoint-interval 10000 --action-mode longitudinal_2d \
-  --reward research_v2 --town Town05 --vehicles 50 --walkers 0 \
-  --traffic off --view-mode none --max-time-episode 500 \
-  --seed 0 --logger tensorboard --run-name v0.1/a2c_town05_seed0
+  --checkpoint-interval 10000 --seed 0 --logger tensorboard \
+  --run-name nocrash/a2c_mlp_smoke_seed0
 ```
 
 ## Metrics And Results
 
 Plot `actor_loss`, `value_loss`, `entropy`, return/cost, and action statistics.
 CPU update/checkpoint tests pass. A formal CARLA run and curves are **Pending**.
+The current runner uses an MLP; pixel-native A2C remains pending.

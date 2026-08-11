@@ -22,11 +22,10 @@ used only during online data collection.
 
 ```bash
 python scripts/train.py \
+  --benchmark nocrash_train_empty_v0 \
   --algo ddpg --total-timesteps 100000 --checkpoint-interval 10000 \
-  --action-mode longitudinal_2d --reward research_v2 \
-  --town Town05 --vehicles 50 --walkers 0 --traffic off --view-mode none \
-  --max-time-episode 500 --seed 0 --logger tensorboard \
-  --checkpoint-replay-buffer --run-name v0.1/ddpg_town05_seed0
+  --seed 0 --logger tensorboard \
+  --checkpoint-replay-buffer --run-name nocrash/ddpg_mlp_smoke_seed0
 ```
 
 ## Metrics And Results
@@ -35,3 +34,4 @@ Track `critic_loss`, `actor_loss`, `avg_q`, return, cost, action saturation, and
 termination reasons. DDPG is intentionally retained as a simple reference but
 is more sensitive to critic error than TD3. CPU update/checkpoint tests pass;
 formal CARLA training and curves are **Pending**.
+The current MLP command is for integration only; the pixel encoder is pending.

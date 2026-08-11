@@ -36,8 +36,7 @@ def checkpoint_config():
         alpha_lr=1e-3,
         target_entropy=-3.0,
         network="SAC",
-        risk_field_sectors=12,
-        max_waypoints=12,
+        max_waypoints=10,
         checkpoint_keep=2,
     )
     return cfg
@@ -77,6 +76,17 @@ class DatasetAndCheckpointTest(unittest.TestCase):
         dataset = OfflineDataset(arrays)
         np.testing.assert_array_equal(dataset.arrays["terminals"], arrays["dones"])
         np.testing.assert_array_equal(dataset.arrays["timeouts"], [0.0, 0.0])
+
+    def test_pixel_dataset_preserves_uint8_states(self):
+        arrays = {
+            "states": np.zeros((2, 32), dtype=np.uint8),
+            "actions": np.zeros((2, 2), dtype=np.float32),
+            "rewards": np.zeros(2, dtype=np.float32),
+            "next_states": np.ones((2, 32), dtype=np.uint8),
+            "dones": np.zeros(2, dtype=np.float32),
+        }
+        dataset = OfflineDataset(arrays)
+        self.assertEqual(dataset.arrays["states"].dtype, np.uint8)
 
     def test_checkpoint_contains_config_and_bounded_history(self):
         cfg = checkpoint_config()

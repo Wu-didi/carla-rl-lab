@@ -14,52 +14,104 @@ from carla_rl_lab.algorithms.registry import AlgorithmSpec, register_algorithm
 from carla_rl_lab.utils.checkpoint import torch_load
 
 
-class SemanticAttentionEncoder(nn.Module):
-    """Attention encoder for the default 299-dimensional observation vector."""
+class PixelEncoder(nn.Module):
+    """Small editable encoder for packed RGB, route, speed, and steer input."""
 
-    def __init__(self, hidden_dim: int, key_dim: int = 64):
+    def __init__(
+        self,
+        state_dim: int,
+        hidden_dim: int,
+        image_size: int,
+        frame_stack: int,
+        num_waypoints: int,
+    ):
         super().__init__()
-        self.projections = nn.ModuleDict(
-            {
-                "ego": nn.Linear(9, key_dim),
-                "lane": nn.Linear(2, key_dim),
-                "risk": nn.Linear(12, key_dim),
-                "lidar": nn.Linear(8, key_dim),
-                "waypoint": nn.Linear(9, key_dim),
-            }
-        )
-        self.query = nn.Linear(key_dim, key_dim)
-        self.key = nn.Linear(key_dim, key_dim, bias=False)
-        self.score = nn.Linear(key_dim, 1, bias=False)
-        self.backbone = nn.Sequential(
-            nn.Linear(key_dim, hidden_dim),
+        self.image_size = int(image_size)
+        self.frame_stack = int(frame_stack)
+        self.num_waypoints = int(num_waypoints)
+        self.image_values = 3 * self.frame_stack * self.image_size ** 2
+        expected_dim = self.image_values + 2 * self.num_waypoints + 2
+        if int(state_dim) != expected_dim:
+            raise ValueError(
+                "Pixel_SAC state_dim mismatch: expected {}, got {}".format(
+                    expected_dim, state_dim
+                )
+            )
+
+        channels = 3 * self.frame_stack
+        self.image_net = nn.Sequential(
+            nn.Conv2d(channels, 32, 3, stride=2),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Conv2d(32, 32, 3, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, 3, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, 3, stride=2),
+            nn.ReLU(),
+        )
+        with torch.no_grad():
+            dummy = torch.zeros(1, channels, self.image_size, self.image_size)
+            image_features = int(self.image_net(dummy).numel())
+        self.image_projection = nn.Sequential(
+            nn.Linear(image_features, 128), nn.LayerNorm(128), nn.Tanh()
+        )
+        self.route_conv = nn.Conv1d(2, 32, kernel_size=2)
+        self.route_projection = nn.Sequential(
+            nn.Linear(32 * (self.num_waypoints - 1), 32),
+            nn.LayerNorm(32),
+            nn.ReLU(),
+        )
+        self.measurement_projection = nn.Sequential(
+            nn.Linear(2, 16), nn.LayerNorm(16), nn.ReLU()
+        )
+        self.backbone = nn.Sequential(
+            nn.Linear(176, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
         )
         self.output_dim = hidden_dim
 
-    def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        if obs.shape[-1] != 299:
-            raise ValueError("Attention SAC expects a 299-dimensional observation")
+    def _random_shift(self, image: torch.Tensor, pad: int = 4) -> torch.Tensor:
+        if not self.training or pad <= 0:
+            return image
+        padded = F.pad(image, (pad, pad, pad, pad), mode="replicate")
+        offset_y = int(torch.randint(0, 2 * pad + 1, (1,), device=image.device))
+        offset_x = int(torch.randint(0, 2 * pad + 1, (1,), device=image.device))
+        return padded[
+            :, :, offset_y : offset_y + self.image_size, offset_x : offset_x + self.image_size
+        ]
+
+    def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         batch_size = obs.shape[0]
-        tokens = torch.cat(
-            [
-                self.projections["ego"](obs[:, 0:9].unsqueeze(1)),
-                self.projections["lane"](obs[:, 9:11].unsqueeze(1)),
-                self.projections["risk"](obs[:, 11:23].unsqueeze(1)),
-                self.projections["lidar"](obs[:, 23:263].reshape(batch_size, 30, 8)),
-                self.projections["waypoint"](obs[:, 263:299].reshape(batch_size, 4, 9)),
-            ],
+        image = obs[:, : self.image_values].reshape(
+            batch_size,
+            3 * self.frame_stack,
+            self.image_size,
+            self.image_size,
+        )
+        image = self._random_shift(image / 255.0 - 0.5)
+        image_features = self.image_projection(
+            self.image_net(image).reshape(batch_size, -1)
+        )
+
+        route_end = self.image_values + 2 * self.num_waypoints
+        route = obs[:, self.image_values : route_end] / 127.5 - 1.0
+        route = route.reshape(batch_size, self.num_waypoints, 2).permute(0, 2, 1)
+        route_features = self.route_projection(
+            F.relu(self.route_conv(route)).reshape(batch_size, -1)
+        )
+
+        measurements = obs[:, route_end : route_end + 2]
+        measurements = torch.stack(
+            (measurements[:, 0] / 255.0, measurements[:, 1] / 127.5 - 1.0),
             dim=1,
         )
-        query = self.query(tokens.mean(dim=1)).unsqueeze(1)
-        scores = self.score(torch.tanh(query + self.key(tokens))).squeeze(-1)
-        weights = F.softmax(scores, dim=-1)
-        encoded = torch.sum(weights.unsqueeze(-1) * tokens, dim=1)
-        return self.backbone(encoded), weights
+        measurement_features = self.measurement_projection(measurements)
+        features = torch.cat(
+            (image_features, route_features, measurement_features), dim=1
+        )
+        return self.backbone(features), None
 
 
 class MlpEncoder(nn.Module):
@@ -79,24 +131,38 @@ class MlpEncoder(nn.Module):
         return self.net(obs), None
 
 
-def make_encoder(state_dim: int, hidden_dim: int, network: str) -> nn.Module:
+def make_encoder(
+    state_dim: int,
+    hidden_dim: int,
+    network: str,
+    image_size: int = 84,
+    frame_stack: int = 3,
+    num_waypoints: int = 10,
+) -> nn.Module:
     normalized = network.lower()
     if normalized in ("sac", "mlp"):
         return MlpEncoder(state_dim, hidden_dim)
-    if normalized in ("attention_sac", "attention"):
-        if state_dim != 299:
-            raise ValueError("Attention SAC currently requires state_dim=299")
-        return SemanticAttentionEncoder(hidden_dim)
+    if normalized in ("pixel_sac", "pixel"):
+        return PixelEncoder(
+            state_dim, hidden_dim, image_size, frame_stack, num_waypoints
+        )
     raise ValueError("Unknown SAC network: {}".format(network))
 
 
 class GaussianActor(nn.Module):
-    def __init__(self, state_dim: int, hidden_dim: int, action_dim: int, action_bound: float, network: str):
+    def __init__(self, cfg: Any):
         super().__init__()
-        self.encoder = make_encoder(state_dim, hidden_dim, network)
-        self.fc_mu = nn.Linear(self.encoder.output_dim, action_dim)
-        self.fc_log_std = nn.Linear(self.encoder.output_dim, action_dim)
-        self.action_bound = float(action_bound)
+        self.encoder = make_encoder(
+            cfg.state_dim,
+            cfg.hidden_dim,
+            cfg.network,
+            getattr(cfg, "image_size", 84),
+            getattr(cfg, "frame_stack", 3),
+            getattr(cfg, "max_waypoints", 10),
+        )
+        self.fc_mu = nn.Linear(self.encoder.output_dim, cfg.action_dim)
+        self.fc_log_std = nn.Linear(self.encoder.output_dim, cfg.action_dim)
+        self.action_bound = float(cfg.action_bound)
 
     def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         features, attention = self.encoder(obs)
@@ -115,15 +181,22 @@ class GaussianActor(nn.Module):
 
 
 class QNetwork(nn.Module):
-    def __init__(self, state_dim: int, hidden_dim: int, action_dim: int, network: str):
+    def __init__(self, cfg: Any):
         super().__init__()
-        self.encoder = make_encoder(state_dim, hidden_dim, network)
+        self.encoder = make_encoder(
+            cfg.state_dim,
+            cfg.hidden_dim,
+            cfg.network,
+            getattr(cfg, "image_size", 84),
+            getattr(cfg, "frame_stack", 3),
+            getattr(cfg, "max_waypoints", 10),
+        )
         self.net = nn.Sequential(
-            nn.Linear(self.encoder.output_dim + action_dim, hidden_dim),
+            nn.Linear(self.encoder.output_dim + cfg.action_dim, cfg.hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(cfg.hidden_dim, cfg.hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 1),
+            nn.Linear(cfg.hidden_dim, 1),
         )
 
     def forward(self, obs: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
@@ -144,13 +217,11 @@ class SacAgent(BaseAgent):
         self.device = torch.device(cfg.device)
         self.gamma = float(cfg.gamma)
         self.tau = float(cfg.tau)
-        network = getattr(cfg, "network", "SAC")
-
-        self.actor = GaussianActor(cfg.state_dim, cfg.hidden_dim, cfg.action_dim, cfg.action_bound, network).to(self.device)
-        self.critic_1 = QNetwork(cfg.state_dim, cfg.hidden_dim, cfg.action_dim, network).to(self.device)
-        self.critic_2 = QNetwork(cfg.state_dim, cfg.hidden_dim, cfg.action_dim, network).to(self.device)
-        self.target_critic_1 = QNetwork(cfg.state_dim, cfg.hidden_dim, cfg.action_dim, network).to(self.device)
-        self.target_critic_2 = QNetwork(cfg.state_dim, cfg.hidden_dim, cfg.action_dim, network).to(self.device)
+        self.actor = GaussianActor(cfg).to(self.device)
+        self.critic_1 = QNetwork(cfg).to(self.device)
+        self.critic_2 = QNetwork(cfg).to(self.device)
+        self.target_critic_1 = QNetwork(cfg).to(self.device)
+        self.target_critic_2 = QNetwork(cfg).to(self.device)
         self.target_critic_1.load_state_dict(self.critic_1.state_dict())
         self.target_critic_2.load_state_dict(self.critic_2.state_dict())
 
@@ -165,11 +236,15 @@ class SacAgent(BaseAgent):
 
     def act(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
         state = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+        was_training = self.actor.training
+        self.actor.eval()
         with torch.no_grad():
             if deterministic:
                 action = self.actor.deterministic(state)
             else:
                 action = self.actor(state)[0]
+        if was_training:
+            self.actor.train()
         return action.cpu().numpy().reshape(-1).astype(np.float32)
 
     def update(self, batch: Dict[str, Any]) -> Dict[str, Any]:
@@ -277,6 +352,6 @@ register_algorithm(
         runner="off_policy",
         action_space="continuous",
         status="implemented",
-        description="Soft Actor-Critic with editable MLP or semantic-attention networks.",
+        description="Soft Actor-Critic with editable MLP or pixel encoders.",
     )
 )

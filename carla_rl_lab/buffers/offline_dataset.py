@@ -40,7 +40,8 @@ class OfflineDataset:
         self.arrays: Dict[str, np.ndarray] = {}
         for name in TRANSITION_FIELDS + OPTIONAL_FIELDS:
             if name in arrays:
-                self.arrays[name] = np.asarray(arrays[name], dtype=np.float32)
+                dtype = None if name in ("states", "next_states") else np.float32
+                self.arrays[name] = np.asarray(arrays[name], dtype=dtype)
 
         size = int(self.arrays["states"].shape[0])
         if size == 0:

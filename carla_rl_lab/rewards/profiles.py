@@ -4,7 +4,7 @@ from functools import partial
 from typing import Any, Callable, Dict, Optional, Tuple
 
 
-_REWARD_PROFILES = ("legacy", "research_v1", "research_v2")
+_REWARD_PROFILES = ("nocrash_v0", "research_v1", "research_v2")
 
 
 def list_reward_profiles() -> Tuple[str, ...]:
@@ -73,9 +73,41 @@ RewardFunction = Callable[
 ]
 
 
+def nocrash_v0_reward(
+    obs: Dict[str, Any],
+    done: bool,
+    info: Dict[str, Any],
+    desired_speed: float,
+) -> Tuple[float, Dict[str, float]]:
+    """Transparent NoCrash-style reward used by the pixel baseline.
+
+    The safe desired speed may use simulator truth during training, as in the
+    RLAD/RLfOLD environment. It is never part of the policy observation.
+    """
+
+    del done
+    maximum_speed = max(float(desired_speed), 1e-6)
+    speed = float(obs["ego_state"][3])
+    safe_speed = float(info.get("safe_desired_speed", maximum_speed))
+    lateral_offset = abs(float(obs["lane_info"][1]))
+    heading_error = abs(float(info.get("heading_error", 0.0)))
+    steer_delta = abs(float(info.get("steer_delta", 0.0)))
+
+    terms = {
+        "reward/speed": 1.0 - abs(speed - safe_speed) / maximum_speed,
+        "reward/position": -lateral_offset / 2.0,
+        "reward/heading": -heading_error,
+        "reward/steer_change": -0.1 if steer_delta > 0.01 else 0.0,
+        "reward/collision": -10.0 if info.get("is_collision", False) else 0.0,
+        "reward/off_road": -10.0 if info.get("is_off_road", False) else 0.0,
+        "reward/red_light": -10.0 if info.get("red_light_infraction", False) else 0.0,
+    }
+    return sum(terms.values()), terms
+
+
 def build_reward_profile(name: str, desired_speed: float) -> Optional[RewardFunction]:
-    if name == "legacy":
-        return None
+    if name == "nocrash_v0":
+        return partial(nocrash_v0_reward, desired_speed=desired_speed)
     if name == "research_v1":
         return partial(research_v1_reward, desired_speed=desired_speed)
     if name == "research_v2":

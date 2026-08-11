@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from carla_rl_lab.algorithms import create_agent, get_algorithm, list_algorithms
 from carla_rl_lab.buffers import ReplayBuffer
+from carla_rl_lab.benchmarks import apply_benchmark, get_benchmark, list_benchmarks
 from carla_rl_lab.config import Config
 from carla_rl_lab.envs import ACTION_MODES, make_carla_env
 from carla_rl_lab.logging import ExperimentLogger, build_experiment_logger
@@ -168,9 +169,7 @@ def train(cfg: Config) -> None:
             consecutive_step_failures = 0
 
             while not done and global_step < cfg.total_timesteps:
-                obs_vector = encode_observation(
-                    obs, cfg.state_dim, cfg.risk_field_sectors
-                )
+                obs_vector = encode_observation(obs, cfg.state_dim)
                 action = agent.act(obs_vector)
 
                 try:
@@ -190,9 +189,7 @@ def train(cfg: Config) -> None:
                 consecutive_step_failures = 0
                 episode_actions.append(action)
 
-                next_obs_vector = encode_observation(
-                    next_obs, cfg.state_dim, cfg.risk_field_sectors
-                )
+                next_obs_vector = encode_observation(next_obs, cfg.state_dim)
                 terminal = bool(
                     done and info.get("termination_reason") != "timeout"
                 )
@@ -277,6 +274,7 @@ def build_argparser() -> argparse.ArgumentParser:
         choices=off_policy_algorithms(),
     )
     parser.add_argument("--town", default=None)
+    parser.add_argument("--benchmark", choices=list(list_benchmarks()), default=None)
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--total-timesteps", type=int, default=None)
     parser.add_argument("--checkpoint-interval", type=int, default=None)
@@ -296,7 +294,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--traffic", choices=["on", "off"], default=None)
     parser.add_argument("--max-time-episode", type=int, default=None)
     parser.add_argument(
-        "--network", default=None, choices=["SAC", "Attention_SAC"]
+        "--network", default=None, choices=["SAC", "Pixel_SAC"]
     )
     parser.add_argument("--action-mode", choices=ACTION_MODES, default=None)
     parser.add_argument(
@@ -348,6 +346,8 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
                     args.algorithm, saved_algorithm
                 )
             )
+    if args.benchmark:
+        apply_benchmark(cfg, get_benchmark(args.benchmark))
     for name in (
         "algorithm",
         "town",
@@ -377,7 +377,7 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         if value is not None:
             setattr(cfg, name, value)
     if args.action_mode is not None:
-        cfg.action_dim = 2 if cfg.action_mode == "longitudinal_2d" else 3
+        cfg.action_dim = 3 if cfg.action_mode == "signed_3d" else 2
         if cfg.algorithm == "sac":
             cfg.target_entropy = -float(cfg.action_dim)
     cfg.pretrained_model_path = args.checkpoint

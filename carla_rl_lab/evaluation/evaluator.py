@@ -38,11 +38,25 @@ def summarize_results(results: List[Dict[str, Any]]) -> Dict[str, float]:
     stationary_rates = np.asarray(
         [item.get("stationary_rate", 0.0) for item in results], dtype=np.float32
     )
+    route_completions = np.asarray(
+        [item.get("route_completion", 0.0) for item in results], dtype=np.float32
+    )
     reasons = [item["termination_reason"] for item in results]
     count = float(len(results))
     off_road_reasons = {"off_road", "wrong_way", "lane_departure"}
     collision_count = reasons.count("collision")
     off_road_count = sum(reason in off_road_reasons for reason in reasons)
+    red_light_count = reasons.count("red_light")
+    blocked_count = reasons.count("blocked")
+    pedestrian_collisions = sum(
+        item.get("collision_type") == "pedestrian" for item in results
+    )
+    vehicle_collisions = sum(
+        item.get("collision_type") == "vehicle" for item in results
+    )
+    layout_collisions = sum(
+        item.get("collision_type") == "layout" for item in results
+    )
     total_distance_km = max(float(distances.sum()) / 1000.0, 1e-3)
     return {
         "benchmark/return_mean": float(returns.mean()),
@@ -60,10 +74,19 @@ def summarize_results(results: List[Dict[str, Any]]) -> Dict[str, float]:
         "benchmark/lane_offset_mean_m": float(lane_offsets.mean()),
         "benchmark/overspeed_rate": float(overspeed_rates.mean()),
         "benchmark/stationary_rate": float(stationary_rates.mean()),
+        "benchmark/route_completion_mean": float(route_completions.mean()),
         "benchmark/collision_rate": collision_count / count,
         "benchmark/off_road_rate": off_road_count / count,
         "benchmark/collisions_per_km": collision_count / total_distance_km,
         "benchmark/off_road_events_per_km": off_road_count / total_distance_km,
+        "benchmark/collision_pedestrian_per_km": pedestrian_collisions
+        / total_distance_km,
+        "benchmark/collision_vehicle_per_km": vehicle_collisions
+        / total_distance_km,
+        "benchmark/collision_layout_per_km": layout_collisions
+        / total_distance_km,
+        "benchmark/red_light_per_km": red_light_count / total_distance_km,
+        "benchmark/blocked_per_km": blocked_count / total_distance_km,
         "benchmark/success_rate": sum(
             bool(item.get("success", item["termination_reason"] == "timeout"))
             for item in results
@@ -93,8 +116,9 @@ def evaluate_benchmark(
     agent: Any,
     seeds: Iterable[int],
     expected_dim: int,
-    risk_field_dim: int = 12,
     logger: Optional[ExperimentLogger] = None,
+    route_limit: int = 0,
+    weather_limit: int = 0,
 ) -> Dict[str, Any]:
     benchmark = get_benchmark(benchmark_name)
     env_overrides = benchmark["env_overrides"]
@@ -103,11 +127,29 @@ def evaluate_benchmark(
     desired_speed = float(env_overrides["desired_speed"])
     success_reasons = set(benchmark.get("success_reasons", ("timeout",)))
     success_criteria = benchmark.get("success_criteria", {})
+    tasks = [(seed, None, None) for seed in seeds]
+    if benchmark.get("route_ids"):
+        route_ids = benchmark["route_ids"]
+        weathers = benchmark["weather_presets"]
+        if route_limit > 0:
+            route_ids = route_ids[:route_limit]
+        if weather_limit > 0:
+            weathers = weathers[:weather_limit]
+        tasks = [
+            (seed, route_id, weather)
+            for seed in seeds
+            for weather in weathers
+            for route_id in route_ids
+        ]
     results = []
-    for episode_index, seed in enumerate(seeds):
+    for episode_index, (seed, route_id, weather) in enumerate(tasks):
         set_seed(seed)
         if hasattr(env, "seed"):
             env.seed(seed)
+        if route_id is not None:
+            env.route_id = int(route_id)
+            env.weather_group = "fixed"
+            env.weather = str(weather)
         obs = env.reset()
         done = False
         total_reward = 0.0
@@ -122,7 +164,7 @@ def evaluate_benchmark(
         info = {}
 
         while not done:
-            obs_vector = encode_observation(obs, expected_dim, risk_field_dim)
+            obs_vector = encode_observation(obs, expected_dim)
             action = agent.act(obs_vector, deterministic=True)
             obs, reward, cost, done, info = env.step(action)
             total_reward += float(reward)
@@ -150,6 +192,8 @@ def evaluate_benchmark(
         )
         result = {
             "seed": seed,
+            "route_id": route_id,
+            "weather": weather,
             "episode_return": total_reward,
             "episode_cost": total_cost,
             "length": length,
@@ -162,6 +206,8 @@ def evaluate_benchmark(
             else 0.0,
             "overspeed_rate": float(overspeed_steps) / max(length, 1),
             "stationary_rate": stationary_rate,
+            "route_completion": float(info.get("route_completion", 0.0)),
+            "collision_type": str(info.get("collision_type", "")),
             "termination_reason": termination_reason,
             "success": success,
         }
@@ -182,6 +228,7 @@ def evaluate_benchmark(
                     ],
                     "benchmark/overspeed_rate": result["overspeed_rate"],
                     "benchmark/stationary_rate": result["stationary_rate"],
+                    "benchmark/route_completion": result["route_completion"],
                     "benchmark/success": float(result["success"]),
                 },
                 episode_index,

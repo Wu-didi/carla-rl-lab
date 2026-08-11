@@ -22,13 +22,12 @@ and terminal semantics.
 
 ```bash
 python scripts/train_imitation.py \
+  --benchmark nocrash_train_empty_v0 \
   --algo airl \
-  --expert-dataset artifacts/datasets/v0.1/town05_autopilot_seed0_100k.npz \
+  --expert-dataset artifacts/datasets/nocrash_expert_seed0_100k.npz \
   --total-timesteps 100000 --rollout-steps 2048 \
-  --checkpoint-interval 10000 --town Town05 --vehicles 50 --walkers 0 \
-  --traffic off --view-mode none --max-time-episode 500 \
-  --reward research_v2 --seed 0 --logger tensorboard \
-  --run-name v0.1/airl_town05_seed0
+  --checkpoint-interval 10000 --seed 0 --logger tensorboard \
+  --run-name nocrash/airl_mlp_seed0
 ```
 
 ## Metrics And Results
@@ -38,3 +37,4 @@ entropy/KL, and fixed benchmark metrics. The schema-v2 dataset distinguishes
 true terminals from timeouts, which is required by the potential term. CPU
 transition/update/checkpoint tests pass; formal CARLA training and curves are
 **Pending**.
+The current policy/discriminator are MLPs; pixel-native AIRL remains pending.

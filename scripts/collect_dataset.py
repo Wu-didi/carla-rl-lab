@@ -11,6 +11,7 @@ import numpy as np
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from carla_rl_lab.buffers import OfflineDataset
+from carla_rl_lab.benchmarks import apply_benchmark, get_benchmark, list_benchmarks
 from carla_rl_lab.config import Config
 from carla_rl_lab.envs import ACTION_MODES, make_carla_env
 from carla_rl_lab.observations import DEFAULT_FIELDS, encode_observation
@@ -48,17 +49,13 @@ def collect(cfg: Config, output_path: str, transition_count: int, policy: str) -
             env.set_ego_autopilot(True)
 
         while len(arrays["states"]) < transition_count:
-            state = encode_observation(
-                observation, cfg.state_dim, cfg.risk_field_sectors
-            )
+            state = encode_observation(observation, cfg.state_dim)
             if policy == "autopilot":
                 next_observation, reward, cost, done, info, action = env.step_sample()
             else:
                 action = env.action_space.sample()
                 next_observation, reward, cost, done, info = env.step(action)
-            next_state = encode_observation(
-                next_observation, cfg.state_dim, cfg.risk_field_sectors
-            )
+            next_state = encode_observation(next_observation, cfg.state_dim)
             timeout = bool(done and info.get("termination_reason") == "timeout")
             terminal = bool(done and not timeout)
             arrays["states"].append(state)
@@ -94,10 +91,10 @@ def collect(cfg: Config, output_path: str, transition_count: int, policy: str) -
             "dones_meaning": "true_terminal_only",
             "config": jsonable_config(cfg),
         }
-        numeric_arrays = {
-            name: np.asarray(values, dtype=np.float32)
-            for name, values in arrays.items()
-        }
+        numeric_arrays = {}
+        for name, values in arrays.items():
+            dtype = np.uint8 if name in ("states", "next_states") else np.float32
+            numeric_arrays[name] = np.asarray(values, dtype=dtype)
         dataset = OfflineDataset(numeric_arrays, metadata=metadata, seed=cfg.seed)
         output_dir = os.path.dirname(os.path.abspath(output_path))
         os.makedirs(output_dir, exist_ok=True)
@@ -120,19 +117,20 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--output", required=True)
     parser.add_argument("--transitions", type=int, default=100_000)
     parser.add_argument("--policy", choices=["autopilot", "random"], default="autopilot")
-    parser.add_argument("--town", default=Config.town)
-    parser.add_argument("--port", type=int, default=Config.port)
-    parser.add_argument("--vehicles", dest="number_of_vehicles", type=int, default=Config.number_of_vehicles)
-    parser.add_argument("--walkers", dest="number_of_walkers", type=int, default=Config.number_of_walkers)
-    parser.add_argument("--traffic", choices=["on", "off"], default=Config.traffic)
-    parser.add_argument("--view-mode", choices=["none", "top", "follow"], default="none")
-    parser.add_argument("--action-mode", choices=ACTION_MODES, default=Config.action_mode)
-    parser.add_argument("--seed", type=int, default=Config.seed)
+    parser.add_argument("--benchmark", choices=list(list_benchmarks()), default=None)
+    parser.add_argument("--town", default=None)
+    parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--vehicles", dest="number_of_vehicles", type=int, default=None)
+    parser.add_argument("--walkers", dest="number_of_walkers", type=int, default=None)
+    parser.add_argument("--traffic", choices=["on", "off"], default=None)
+    parser.add_argument("--view-mode", choices=["none", "top", "follow"], default=None)
+    parser.add_argument("--action-mode", choices=ACTION_MODES, default=None)
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument(
         "--reward",
         dest="reward_profile",
         choices=list(list_reward_profiles()),
-        default=Config.reward_profile,
+        default=None,
     )
     return parser
 
@@ -140,10 +138,15 @@ def build_argparser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_argparser().parse_args()
     cfg = Config()
+    if args.benchmark:
+        apply_benchmark(cfg, get_benchmark(args.benchmark))
     for name, value in vars(args).items():
-        if name not in ("output", "transitions", "policy"):
+        if (
+            name not in ("output", "transitions", "policy", "benchmark")
+            and value is not None
+        ):
             setattr(cfg, name, value)
-    cfg.action_dim = 2 if cfg.action_mode == "longitudinal_2d" else 3
+    cfg.action_dim = 3 if cfg.action_mode == "signed_3d" else 2
     print("[Config]", asdict(cfg))
     collect(cfg, args.output, args.transitions, args.policy)
 

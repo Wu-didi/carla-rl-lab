@@ -23,12 +23,10 @@ timeout-aware GAE, normalized advantages, and gradient clipping.
 
 ```bash
 python scripts/train_on_policy.py \
+  --benchmark nocrash_train_empty_v0 \
   --algo ppo --total-timesteps 100000 --rollout-steps 2048 \
   --checkpoint-interval 10000 --ppo-epochs 10 --ppo-minibatch-size 64 \
-  --action-mode longitudinal_2d --reward research_v2 \
-  --town Town05 --vehicles 50 --walkers 0 --traffic off --view-mode none \
-  --max-time-episode 500 --seed 0 --logger tensorboard \
-  --run-name v0.1/ppo_town05_seed0
+  --seed 0 --logger tensorboard --run-name nocrash/ppo_mlp_smoke_seed0
 ```
 
 ## Metrics And Results
@@ -38,3 +36,4 @@ return/cost, and action statistics. `approx_kl` and `clip_fraction` diagnose
 updates that are too large even when return is noisy. A 32-step CARLA 0.9.15
 integration smoke completed with one rollout/update and valid checkpoint. That
 is runner evidence only; a formal result and curves are **Pending**.
+The current runner uses an MLP; pixel-native PPO remains pending.

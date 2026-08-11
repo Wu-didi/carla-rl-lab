@@ -45,9 +45,15 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--episodes", type=int, default=0, help="0 uses all benchmark seeds"
     )
+    parser.add_argument(
+        "--routes", type=int, default=0, help="0 uses all NoCrash routes"
+    )
+    parser.add_argument(
+        "--weathers", type=int, default=0, help="0 uses all NoCrash weathers"
+    )
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument(
-        "--network", choices=["SAC", "Attention_SAC"], default=None
+        "--network", choices=["SAC", "Pixel_SAC"], default=None
     )
     parser.add_argument(
         "--logger",
@@ -120,8 +126,9 @@ def evaluate_one(args: argparse.Namespace, benchmark_name: str):
             agent,
             seeds,
             expected_dim=cfg.state_dim,
-            risk_field_dim=cfg.risk_field_sectors,
             logger=logger,
+            route_limit=args.routes,
+            weather_limit=args.weathers,
         )
         report["algorithm"] = cfg.algorithm
         report["checkpoint"] = checkpoint_report(args.checkpoint)

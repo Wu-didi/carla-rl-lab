@@ -43,10 +43,9 @@ def train(cfg: Config) -> None:
             "longitudinal_2d" if dataset.action_dim == 2 else cfg.action_mode,
         )
         source_config = dataset.metadata.get("config", {})
-        cfg.risk_field_sectors = int(
-            source_config.get("risk_field_sectors", cfg.risk_field_sectors)
-        )
-        cfg.max_waypoints = int(source_config.get("max_waypoints", cfg.max_waypoints))
+        for name in ("max_waypoints", "image_size", "frame_stack", "network"):
+            if name in source_config:
+                setattr(cfg, name, source_config[name])
     if dataset.state_dim != cfg.state_dim or dataset.action_dim != cfg.action_dim:
         raise ValueError(
             "dataset dimensions are state_dim={}, action_dim={}; config expects {}, {}".format(

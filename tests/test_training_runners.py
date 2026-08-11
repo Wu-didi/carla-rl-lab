@@ -13,11 +13,11 @@ from scripts import train_on_policy as on_policy_runner
 
 def observation():
     return {
-        "ego_state": np.zeros(9, dtype=np.float32),
+        "image": np.zeros((9, 84, 84), dtype=np.uint8),
+        "waypoints": np.zeros(20, dtype=np.float32),
+        "vehicle_measurements": np.zeros(2, dtype=np.float32),
+        "ego_state": np.zeros(7, dtype=np.float32),
         "lane_info": np.zeros(2, dtype=np.float32),
-        "risk_field": np.zeros(12, dtype=np.float32),
-        "lidar": np.zeros(240, dtype=np.float32),
-        "waypoints": np.zeros(36, dtype=np.float32),
     }
 
 
@@ -112,6 +112,15 @@ class TrainingRunnerTest(unittest.TestCase):
         self.assertEqual(cfg.algorithm, "a2c")
         self.assertEqual(cfg.total_timesteps, 64)
         self.assertEqual(cfg.rollout_steps, 16)
+        self.assertEqual(cfg.action_dim, 2)
+
+    def test_on_policy_target_speed_benchmark_uses_two_actions(self):
+        args = on_policy_runner.build_argparser().parse_args(
+            ["--algo", "ppo", "--benchmark", "nocrash_train_empty_v0"]
+        )
+        cfg = on_policy_runner.apply_overrides(Config(), args)
+        self.assertEqual(cfg.town, "Town01")
+        self.assertEqual(cfg.action_mode, "target_speed_2d")
         self.assertEqual(cfg.action_dim, 2)
 
     def test_off_policy_stops_and_checkpoints_at_step_budget(self):

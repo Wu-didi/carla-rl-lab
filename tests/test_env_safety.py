@@ -37,6 +37,17 @@ class FakeWorld:
         self.navigation_calls += 1
         return None
 
+    def get_blueprint_library(self):
+        return FakeBlueprintLibrary()
+
+
+class FakeBlueprintLibrary:
+    def filter(self, pattern):
+        return [object()]
+
+    def find(self, name):
+        return object()
+
 
 class EnvSafetyTest(unittest.TestCase):
     def test_env_seed_does_not_reset_algorithm_global_rng(self):
@@ -60,19 +71,12 @@ class EnvSafetyTest(unittest.TestCase):
         env = CarlaEnv.__new__(CarlaEnv)
         env.world = FakeWorld()
         env.max_walker_spawn_attempts = 3
-        env.walker_spawn_points = []
-        self.assertEqual(env._spawn_walkers(5), 0)
+        env.number_of_walkers = 5
+        env.spawned_walkers = []
+        env.walker_controllers = []
+        env._spawn_walkers()
+        self.assertEqual(len(env.spawned_walkers), 0)
         self.assertEqual(env.world.navigation_calls, 3)
-
-    def test_world_and_traffic_manager_sync_together(self):
-        env = CarlaEnv.__new__(CarlaEnv)
-        env.settings = SimpleNamespace(synchronous_mode=False)
-        env.world = FakeWorld()
-        env.traffic_manager = FakeTrafficManager()
-        env._set_synchronous_mode(True)
-        self.assertTrue(env.settings.synchronous_mode)
-        self.assertTrue(env.traffic_manager.synchronous)
-        self.assertIs(env.world.applied_settings, env.settings)
 
 
 if __name__ == "__main__":

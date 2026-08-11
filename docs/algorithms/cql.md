@@ -25,9 +25,9 @@ the SAC objective with fixed `offline_entropy_alpha`.
 ```bash
 python scripts/train_offline.py \
   --algo cql \
-  --dataset artifacts/datasets/v0.1/town05_autopilot_seed0_100k.npz \
+  --dataset artifacts/datasets/nocrash_expert_seed0_100k.npz \
   --updates 100000 --batch-size 256 --checkpoint-interval 10000 \
-  --seed 0 --logger tensorboard --run-name v0.1/cql_town05_seed0
+  --seed 0 --logger tensorboard --run-name nocrash/cql_mlp_seed0
 ```
 
 The dataset is produced with the collection command in [TD3+BC](td3_bc.md).
@@ -41,3 +41,4 @@ Plot `bellman_loss`, `conservative_loss`, both total critic losses,
 collapse all values; a small value can fail to control extrapolation. CPU
 update/checkpoint tests pass. Formal CARLA-dataset training and curves are
 **Pending**.
+The current CQL networks are MLPs; pixel-native training remains pending.

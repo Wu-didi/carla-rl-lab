@@ -24,7 +24,7 @@ from carla_rl_lab.buffers import OfflineDataset, ReplayBuffer, RolloutBuffer
 from carla_rl_lab.config import Config
 from carla_rl_lab.evaluation import evaluate_benchmark, summarize_suite
 from carla_rl_lab.logging import ExperimentLogger
-from carla_rl_lab.observations import encode_observation
+from carla_rl_lab.observations import encode_observation, pixel_state_dim
 from carla_rl_lab.rewards import build_reward_profile
 
 
@@ -64,6 +64,9 @@ def tiny_config(state_dim=8, network="SAC"):
         iql_max_weight=100.0,
         discriminator_lr=1e-3,
         discriminator_updates=1,
+        image_size=32,
+        frame_stack=1,
+        max_waypoints=4,
     )
 
 
@@ -77,13 +80,15 @@ def random_batch(batch_size, state_dim):
     }
 
 
-def vector_observation():
+def pixel_observation(image_size=8, frame_stack=1, max_waypoints=2):
     return {
-        "ego_state": np.zeros(9, dtype=np.float32),
+        "image": np.zeros(
+            (3 * frame_stack, image_size, image_size), dtype=np.uint8
+        ),
+        "waypoints": np.zeros(2 * max_waypoints, dtype=np.float32),
+        "vehicle_measurements": np.zeros(2, dtype=np.float32),
+        "ego_state": np.zeros(7, dtype=np.float32),
         "lane_info": np.zeros(2, dtype=np.float32),
-        "risk_field": np.zeros(12, dtype=np.float32),
-        "lidar": np.zeros(240, dtype=np.float32),
-        "waypoints": np.zeros(36, dtype=np.float32),
     }
 
 
@@ -103,13 +108,13 @@ class FakeEnv:
 
     def reset(self):
         self.step_count = 0
-        return vector_observation()
+        return pixel_observation()
 
     def step(self, action):
         self.step_count += 1
         done = self.step_count == 2
         info = {"termination_reason": "timeout" if done else None}
-        obs = vector_observation()
+        obs = pixel_observation()
         obs["ego_state"][0] = float(self.step_count)
         obs["ego_state"][3] = 1.0
         obs["lane_info"][1] = 0.2
@@ -250,27 +255,40 @@ class CoreSmokeTest(unittest.TestCase):
             action = restored.act(np.zeros(8, dtype=np.float32), deterministic=True)
             self.assertEqual(action.shape, (3,))
 
-    def test_attention_sac(self):
-        cfg = tiny_config(state_dim=299, network="Attention_SAC")
+    def test_pixel_sac(self):
+        state_dim = pixel_state_dim(32, 1, 4)
+        cfg = tiny_config(state_dim=state_dim, network="Pixel_SAC")
         agent = create_agent("sac", cfg)
-        action = agent.act(np.zeros(299, dtype=np.float32), deterministic=True)
+        packed = np.zeros(state_dim, dtype=np.uint8)
+        action = agent.act(packed, deterministic=True)
         self.assertEqual(action.shape, (3,))
-        logs = agent.update(random_batch(2, 299))
-        self.assertEqual(tuple(logs["attention_img"].shape), (1, 1, 37))
+        batch = random_batch(2, state_dim)
+        batch["states"] = np.random.randint(
+            0, 256, size=(2, state_dim), dtype=np.uint8
+        )
+        batch["next_states"] = np.random.randint(
+            0, 256, size=(2, state_dim), dtype=np.uint8
+        )
+        logs = agent.update(batch)
+        self.assertTrue(np.isfinite(logs["critic_1_loss"]))
 
     def test_observation_and_replay_buffer(self):
-        encoded = encode_observation(vector_observation(), expected_dim=299)
-        self.assertEqual(encoded.shape, (299,))
+        expected_dim = pixel_state_dim(8, 1, 2)
+        encoded = encode_observation(
+            pixel_observation(), expected_dim=expected_dim
+        )
+        self.assertEqual(encoded.shape, (expected_dim,))
+        self.assertEqual(encoded.dtype, np.uint8)
 
         buffer = ReplayBuffer(4)
         for index in range(4):
             buffer.add(encoded, np.zeros(3), float(index), encoded, False)
         batch = buffer.sample(2)
-        self.assertEqual(batch["states"].shape, (2, 299))
+        self.assertEqual(batch["states"].shape, (2, expected_dim))
         self.assertEqual(batch["actions"].shape, (2, 3))
 
     def test_reward_profile_decomposition(self):
-        obs = vector_observation()
+        obs = pixel_observation()
         obs["ego_state"][3] = 8.0
         reward_fn = build_reward_profile("research_v1", desired_speed=8.0)
         reward, terms = reward_fn(
@@ -283,7 +301,7 @@ class CoreSmokeTest(unittest.TestCase):
         self.assertIn("reward/collision", terms)
 
     def test_research_v2_penalizes_idle_without_rewarding_early_failure(self):
-        obs = vector_observation()
+        obs = pixel_observation()
         reward_fn = build_reward_profile("research_v2", desired_speed=8.0)
 
         idle_reward, idle_terms = reward_fn(
@@ -320,19 +338,24 @@ class CoreSmokeTest(unittest.TestCase):
 
     def test_benchmark_evaluator(self):
         self.assertEqual(
-            list_benchmarks(),
-            (
+            set(list_benchmarks()),
+            {
                 "adverse_weather_v0",
                 "dense_traffic_v0",
                 "lane_following_empty_v0",
                 "lane_following_v0",
+                "nocrash_dense_v0",
+                "nocrash_empty_v0",
+                "nocrash_regular_v0",
+                "nocrash_train_empty_v0",
+                "nocrash_train_v0",
                 "town02_generalization_v0",
                 "urban_traffic_v0",
-            ),
+            },
         )
         self.assertEqual(
             list_benchmark_suites(),
-            ("carla_common_v0", "carla_lightweight_v0"),
+            ("carla_common_v0", "carla_lightweight_v0", "nocrash_0915_v0"),
         )
         self.assertEqual(len(get_benchmark_suite("carla_common_v0")), 5)
         self.assertEqual(
@@ -349,7 +372,7 @@ class CoreSmokeTest(unittest.TestCase):
             env,
             FakeAgent(),
             seeds=(0, 1),
-            expected_dim=299,
+            expected_dim=pixel_state_dim(8, 1, 2),
         )
         self.assertEqual(report["summary"]["benchmark/success_rate"], 0.0)
         self.assertEqual(report["summary"]["benchmark/return_mean"], 2.0)

@@ -22,11 +22,10 @@ deterministic action.
 
 ```bash
 python scripts/train.py \
+  --benchmark nocrash_train_empty_v0 \
   --algo td3 --total-timesteps 100000 --checkpoint-interval 10000 \
-  --action-mode longitudinal_2d --reward research_v2 \
-  --town Town05 --vehicles 50 --walkers 0 --traffic off --view-mode none \
-  --max-time-episode 500 --seed 0 --logger tensorboard \
-  --checkpoint-replay-buffer --run-name v0.1/td3_town05_seed0
+  --seed 0 --logger tensorboard \
+  --checkpoint-replay-buffer --run-name nocrash/td3_mlp_smoke_seed0
 ```
 
 Resume by adding `--checkpoint /path/to/td3_ckpt_last.pt` and setting the new
@@ -38,3 +37,5 @@ Plot both critic losses, delayed `actor_loss`, `avg_q`, episode return/cost,
 action distributions, termination reasons, and reward terms. CPU update and
 checkpoint round-trip tests pass. A formal CARLA training run and performance
 curve have not been completed; status is **Pending**, not zero performance.
+The command currently uses the MLP on packed input and is an interface run, not
+a pixel-native baseline.

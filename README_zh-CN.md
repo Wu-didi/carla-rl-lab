@@ -1,549 +1,348 @@
-<h1 align="center">CarlaRLLab</h1>
+<div align="center">
 
-<p align="center">
-  <strong>面向 CARLA 自动驾驶研究的透明强化学习平台。</strong><br>
-  修改策略网络，重写奖励函数，复现实验基准。
-</p>
+# CarlaRLLab
 
-<p align="center">
-  <a href="https://github.com/Wu-didi/carla-rl-lab"><img alt="Version" src="https://img.shields.io/badge/version-0.1.0-2563eb?style=for-the-badge"></a>
-  <a href="https://www.python.org/"><img alt="Python 3.7" src="https://img.shields.io/badge/Python-3.7-3776ab?style=for-the-badge&amp;logo=python&amp;logoColor=white"></a>
-  <a href="https://carla.org/"><img alt="CARLA 0.9.13 and 0.9.15" src="https://img.shields.io/badge/CARLA-0.9.13%20%7C%200.9.15-e11d48?style=for-the-badge"></a>
-  <a href="#算法规划"><img alt="11 RL algorithms" src="https://img.shields.io/badge/RL-11%20algorithms-059669?style=for-the-badge"></a>
-</p>
+**面向 CARLA 城市自动驾驶的、易修改的视觉强化学习研究框架。**
 
-<p align="center">
-  <a href="https://github.com/Wu-didi/carla-rl-lab/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Wu-didi/carla-rl-lab?style=flat-square"></a>
-  <a href="https://github.com/Wu-didi/carla-rl-lab/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/Wu-didi/carla-rl-lab?style=flat-square"></a>
-  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-16a34a?style=flat-square"></a>
-  <a href="#实验日志"><img alt="TensorBoard" src="https://img.shields.io/badge/logging-TensorBoard-ff6f00?style=flat-square&amp;logo=tensorflow&amp;logoColor=white"></a>
-  <a href="#实验日志"><img alt="Weights and Biases" src="https://img.shields.io/badge/logging-W%26B-facc15?style=flat-square&amp;logo=weightsandbiases&amp;logoColor=111827"></a>
-</p>
+[![CARLA](https://img.shields.io/badge/CARLA-0.9.15-e11d48?style=flat-square)](https://github.com/carla-simulator/carla/releases/tag/0.9.15)
+[![Python](https://img.shields.io/badge/Python-3.7-3776ab?style=flat-square)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-1.13-ee4c2c?style=flat-square)](https://pytorch.org/)
+[![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat-square)](LICENSE)
 
-<p align="center">
-  <a href="README.md">English</a> |
-  <a href="README_zh-CN.md">简体中文</a> |
-  <a href="docs/algorithms/README.md">算法指南</a> |
-  <a href="docs/architecture.md">架构说明</a> |
-  <a href="https://github.com/Wu-didi/carla-rl-lab/issues">提交问题</a>
-</p>
+[English](README.md) | [简体中文](README_zh-CN.md)
 
-> [!IMPORTANT]
-> CarlaRLLab 不是 SB3 的 CARLA 封装。策略网络、更新公式、奖励函数、训练循环、
-> 日志和 benchmark 协议都保持可见、可改。每种数据源只对应一个小而明确的 runner。
+</div>
 
-## 当前能力
+CarlaRLLab 服务于需要频繁修改策略网络、观测、奖励函数和训练公式的研究工作，
+避免把关键逻辑藏在复杂 RL 框架与多层 wrapper 中。第一版有意控制范围：先做好一个
+Pixel SAC 主基线、一个有版本的 NoCrash 适配、透明的 PyTorch 实现和可复现实验产物。
 
-| 科研模块 | v0.1 |
-| --- | --- |
-| 算法 | SAC、TD3、DDPG、PPO、A2C、TD3+BC、CQL、IQL、BC、GAIL、AIRL |
-| 策略网络 | Gaussian 与确定性 Actor-Critic、语义注意力 SAC |
-| CARLA 版本 | 0.9.13 已有文档；0.9.15 connection/reset/step 已验证，完整 benchmark 待完成 |
-| CARLA 控制 | 明确的 `signed_3d` 与 `longitudinal_2d` policy action space |
-| 奖励 | 原始 reward、可复现的 `research_v1` 与防静止塌缩的 `research_v2` |
-| 日志 | TensorBoard、W&B 在线/离线、reward 分项日志 |
-| Benchmark | 论文标准评测启动器与轻量内部 suite |
-| 验证 | CPU 更新与回归测试；真实 CARLA 收敛验证仍待完成 |
+> **当前研究状态：**CARLA 0.9.15 连接、像素观测、固定路线、replay 更新、
+> checkpoint、TensorBoard 和真实端到端训练 smoke 均已验证。Smoke 只能证明链路
+> 可运行，不代表算法已经收敛；多随机种子正式结果仍在进行中。
 
-## 明确分离的训练链路
+## 为什么做 CarlaRLLab
 
-```mermaid
-flowchart LR
-    A[CARLA] --> B[Observation + reward]
-    B --> C[ReplayBuffer: SAC / TD3 / DDPG]
-    B --> D[RolloutBuffer: PPO / A2C]
-    E[固定 dataset] --> F[TD3+BC / CQL / IQL / BC]
-    E --> G[GAIL / AIRL]
-    B --> G
-    C --> H[Agent update]
-    D --> H
-    F --> H
-    G --> H
-    H --> I[日志 + checkpoint + benchmark]
+- **方便科研修改。**算法公式使用普通 PyTorch 编写，奖励项与观测打包是短函数。
+- **先固定协议，再比较分数。**训练和验证选择命名 benchmark，不依赖未记录的命令行
+  参数。
+- **统一策略输入。**当前策略只接收前视 RGB、路线点、速度和上一时刻转角。模拟器
+  真值只用于奖励、终止和评估，不会暗中进入策略。
+- **完整科研日志。**默认支持 TensorBoard，可选 W&B；记录配置、checkpoint 元数据、
+  reward 分项、loss、动作统计和 benchmark 指标。
+- **结构简单。**Agent 由小型网络和 buffer 组合，不建立多层环境 wrapper 或复杂类继承。
+
+## 当前范围
+
+| 分类 | 算法 | 实现状态 |
+| --- | --- | --- |
+| 在线、off-policy | SAC、TD3、DDPG | SAC 已有主要像素编码器；三个算法的 MLP 核心均有测试 |
+| 在线、on-policy | PPO、A2C | 更新公式和 runner 已实现；像素编码器待接入 |
+| 离线 RL | TD3+BC、CQL(H)、IQL | Dataset runner 与 MLP 核心已实现；像素基线待完成 |
+| 模仿学习 | BC、GAIL、AIRL | Runner 已实现；像素基线待完成 |
+
+算法 registry 会阻止用错误 runner 启动算法。这里的“已实现”不等于已经有论文级
+CARLA checkpoint；只有在下面固定协议中完成训练与验证后，才会发布正式 baseline。
+
+## 观测与控制协议
+
+默认 `pixel_v1` 参考
+[RLAD](https://arxiv.org/abs/2305.18510) 与
+[RLfOLD](https://ojs.aaai.org/index.php/AAAI/article/view/29049) 的策略输入形式：
+
+```text
+前视 RGB：           3 帧 x 3 x 84 x 84，uint8
+路线：               10 个 ego 坐标系下的 (x, y) 路线点
+车辆测量：           归一化速度 + 上一时刻转角
+Replay 打包状态：    63,526 个 uint8
+策略动作：           目标速度 + 转角，均在 [-1, 1]
+底层控制：           目标速度经 PID 转换为油门/刹车
 ```
 
-项目没有 trainer 继承树，也没有 reward class 链。四个 runner 只在数据流确实不同时
-分开。
+全局位姿、车道测量、周围 actor 状态、激光雷达和 risk field 都不是策略输入；这些
+信息只允许用于环境奖励、终止或评估。当前实用默认值为 `84x84`，而 RLAD 使用
+`256x256`、CARLA 0.9.10.1 和不同训练预算，因此本项目 CARLA 0.9.15 适配结果不能
+直接写成与 RLAD 完全同协议的成绩。详细边界见[观测协议](docs/observations.md)。
 
-## 快速开始
+## NoCrash 0.9.15
 
-当前参考环境使用预编译的 **CARLA 0.9.13 Linux 安装包**与
-**Python 3.7**。以下命令默认使用 Ubuntu x86_64、Conda 和 NVIDIA GPU。
-CARLA 官方建议至少 6 GB 显存，推荐 8 GB，预留约 20 GB 磁盘空间，并确保
-TCP 端口 2000 和 2001 可用。下载来源参见
-[CARLA 0.9.13 官方 Release](https://github.com/carla-simulator/carla/releases/tag/0.9.13)
-与[官方安装文档](https://carla.readthedocs.io/en/0.9.13/start_quickstart/)。
+`nocrash_0915_v0` 将 RLAD/RLfOLD 使用的固定路线与验证网格适配到 CARLA
+0.9.15 API：
 
-### 0. 检查基础条件
+| 划分 | 地图 | 车辆 / 行人 | 天气 | Episode 数 |
+| --- | --- | ---: | --- | ---: |
+| 训练 | Town01 | 空场景或 20 / 50 | 4 种训练天气 | 持续抽取路线 |
+| Empty | Town02 | 0 / 0 | 2 种未见天气 | 25 路线 x 2 = 50 |
+| Regular | Town02 | 15 / 50 | 2 种未见天气 | 50 |
+| Dense | Town02 | 70 / 150 | 2 种未见天气 | 50 |
 
-安装下载所需的基础工具，并确认 NVIDIA 驱动和 Conda 已经可用：
+成功表示在没有碰撞、驶出车道、闯红灯终止或堵塞的情况下完成路线。报告包含成功率、
+路线完成度、return、速度、分类碰撞、红灯、堵塞和每公里违规数。红灯检测是明确记录
+的 CARLA 0.9.15 近似实现，因此该 suite 称为 0.9.15 adaptation，而不是旧版
+CARLA 0.8 NoCrash 原生 runner。
+
+## 目录结构
+
+```text
+carla_rl_lab/
+  algorithms/       易修改的 PyTorch 算法与 registry
+  benchmarks/       命名协议、NoCrash 路线与天气组
+  buffers/          replay、rollout 和离线数据集
+  envs/             单一 CARLA 环境与控制转换
+  evaluation/       路线指标和 suite 汇总
+  logging/          TensorBoard 与可选 W&B 后端
+  observations/     策略观测打包
+  rewards/          有版本的奖励函数
+scripts/             训练、采集、验证、smoke、曲线导出
+docs/                协议、架构、实验与算法教程
+tests/               CPU 单元测试和集成测试
+```
+
+## 安装
+
+参考环境为 Linux x86_64、NVIDIA GPU、CARLA 0.9.15 和 Python 3.7。CARLA 是
+独立模拟器进程，不会随着 `pip install -e .` 安装。
+
+### 1. 确定安装目录
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y git wget tar
-
-nvidia-smi
-conda --version
+export CARLA_ROOT="$HOME/simulators/CARLA_0.9.15"
+export CARLA_RL_LAB_ROOT="$HOME/code/carla-rl-lab"
+mkdir -p "$CARLA_ROOT" "$(dirname "$CARLA_RL_LAB_ROOT")"
 ```
 
-如果找不到 `conda`，先安装
-[Linux 版 Miniconda](https://docs.conda.io/projects/miniconda/en/latest/)。GPU 驱动安装方式
-与具体机器有关，需要在启动 CARLA 前完成。
+需要长期生效时，将这两个环境变量加入 shell 配置。
 
-### 1. 规划安装目录
+### 2. 下载并解压 CARLA 0.9.15
 
-CARLA 模拟器不要解压到本 Git 仓库中。将大型二进制文件和项目源码分开，后续更新
-CarlaRLLab 时不会误操作模拟器文件。
-
-```bash
-mkdir -p "$HOME/simulators/carla/0.9.13"
-mkdir -p "$HOME/workspace"
-
-export CARLA_ROOT="$HOME/simulators/carla/0.9.13"
-export CARLA_RL_LAB_ROOT="$HOME/workspace/carla-rl-lab"
-```
-
-变量只对当前终端有效。需要在新终端中自动生效时，将两条 `export` 命令加入
-`~/.bashrc`。
-
-### 2. 下载并解压 CARLA 0.9.13
-
-在 `CARLA_ROOT` 中下载官方 Ubuntu 安装包，并直接解压到当前目录。压缩包会把
-`CarlaUE4.sh` 等文件释放到当前目录，不要再额外创建一层嵌套的
-`CARLA_0.9.13/` 文件夹。
+把官方 Linux 预编译包直接下载、解压到 `CARLA_ROOT`。压缩包本身已经包含
+`CarlaUE4.sh`，不要在里面再套一层 `CARLA_0.9.15` 目录。
 
 ```bash
 cd "$CARLA_ROOT"
-wget -c https://tiny.carla.org/carla-0-9-13-linux \
-  -O CARLA_0.9.13.tar.gz
-tar -xzf CARLA_0.9.13.tar.gz
+wget -c \
+  https://github.com/carla-simulator/carla/releases/download/0.9.15/CARLA_0.9.15.tar.gz \
+  -O CARLA_0.9.15.tar.gz
+tar -xzf CARLA_0.9.15.tar.gz
 ```
 
-解压后的关键目录应当如下：
+关键目录应为：
 
 ```text
 $CARLA_ROOT/
   CarlaUE4.sh
   CarlaUE4/
   PythonAPI/
-    carla/dist/
-      carla-0.9.13-cp37-cp37m-manylinux_2_27_x86_64.whl
+    carla/
+      agents/
+      dist/carla-0.9.15-py3.7-linux-x86_64.egg
 ```
 
-确认启动脚本与 Python 3.7 wheel 均存在：
+继续之前先检查：
 
 ```bash
 test -x "$CARLA_ROOT/CarlaUE4.sh" && echo "CARLA server: OK"
-ls "$CARLA_ROOT"/PythonAPI/carla/dist/*cp37*.whl
+ls "$CARLA_ROOT"/PythonAPI/carla/dist/*0.9.15*py3.7*
 ```
 
-### 3. 可选：安装额外地图
+Town01 和 Town02 已包含在基础包中，运行 NoCrash 无需下载 Additional Maps。
 
-本项目的 `lane_following_v0` benchmark 使用基础包已经包含的 Town05，因此第一版
-无需下载额外地图。只有需要 Town06、Town07 或 Town10 时才执行：
-
-```bash
-cd "$CARLA_ROOT"
-wget -c https://tiny.carla.org/additional-maps-0-9-13-linux \
-  -O Import/AdditionalMaps_0.9.13.tar.gz
-./ImportAssets.sh
-```
-
-### 4. 下载 CarlaRLLab 并创建 Python 环境
+### 3. 克隆项目并创建 Python 环境
 
 ```bash
-git clone https://github.com/Wu-didi/carla-rl-lab.git "$CARLA_RL_LAB_ROOT"
+git clone git@github.com:Wu-didi/carla-rl-lab.git "$CARLA_RL_LAB_ROOT"
 cd "$CARLA_RL_LAB_ROOT"
 
-conda create -n carla37 python=3.7 -y
-conda activate carla37
+conda create -n carla-rl-lab python=3.7 -y
+conda activate carla-rl-lab
+python -m pip install --upgrade "pip<24.1"
 python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
 
-### 5. 安装完全匹配的 CARLA Python API
+### 4. 加载完全匹配的 CARLA Python API
 
-使用 CARLA 安装包自带的 wheel。不要随意从 PyPI 安装其他版本的 `carla`，否则
-Python client 与 CARLA server 可能不兼容。
+CARLA 0.9.15 自带 Python 3.7 egg。`PYTHONPATH` 必须同时包含 API 根目录
+（提供 navigation agents）和 egg（提供 `import carla`）：
 
 ```bash
-python -m pip install \
-  "$CARLA_ROOT/PythonAPI/carla/dist/carla-0.9.13-cp37-cp37m-manylinux_2_27_x86_64.whl"
+export PYTHONPATH="$CARLA_ROOT/PythonAPI/carla:$CARLA_ROOT/PythonAPI/carla/dist/carla-0.9.15-py3.7-linux-x86_64.egg:${PYTHONPATH:-}"
 
-python -c "import carla; print('CARLA Python API:', carla.__file__)"
+python -c "import carla; from agents.navigation.behavior_agent import BehaviorAgent; print(carla.__file__)"
 ```
 
-### 6. 启动 CARLA Server
+不要在该环境中从 PyPI 安装其他版本的 `carla`。Client/server 版本不匹配有时要到
+连接模拟器后才会报错。
 
-打开**终端 A**，进入解压后的 CARLA 根目录，使用下面任一项目约定命令。首次启动
-可能需要等待一段时间。
+### 5. 启动 CARLA
 
-**无界面模式：**
+打开终端 A，严格使用下面两条项目约定命令之一。
+
+无界面训练：
 
 ```bash
 cd "$CARLA_ROOT"
 ./CarlaUE4.sh -RenderOffScreen -quality_level=Low-prefernvidia
 ```
 
-**窗口模式：**
+窗口调试：
 
 ```bash
 cd "$CARLA_ROOT"
 ./CarlaUE4.sh -quality_level=Low-prefernvidia
 ```
 
-仓库中的启动脚本可以在任意目录执行相同命令：
+仓库脚本执行的是同样命令：
 
 ```bash
-cd "$CARLA_RL_LAB_ROOT"
 CARLA_ROOT="$CARLA_ROOT" scripts/launch_carla.sh offscreen
-# 或者：CARLA_ROOT="$CARLA_ROOT" scripts/launch_carla.sh window
 ```
 
-### 7. 验证 Server 连接与项目环境
+### 6. 验证完整链路
 
-保持终端 A 运行。打开**终端 B**，激活同一个 Conda 环境，并连接默认 RPC 端口
-`2000`：
+保持 CARLA 运行，在终端 B 执行：
 
 ```bash
-conda activate carla37
+conda activate carla-rl-lab
 cd "$CARLA_RL_LAB_ROOT"
+export PYTHONPATH="$CARLA_ROOT/PythonAPI/carla:$CARLA_ROOT/PythonAPI/carla/dist/carla-0.9.15-py3.7-linux-x86_64.egg:${PYTHONPATH:-}"
 
-python -c "import carla; c=carla.Client('127.0.0.1', 2000); c.set_timeout(10.0); print('Connected map:', c.get_world().get_map().name)"
 python -m unittest discover -s tests -v
+python scripts/smoke_carla.py \
+  --benchmark nocrash_empty_v0 --steps 10 \
+  --frame-output artifacts/smoke/nocrash_town02_rgb.png
 ```
 
-两条命令都成功后，说明模拟器、Python API 和 CarlaRLLab 核心环境已经就绪，可以
-继续执行下一节的训练命令。
+Smoke 应打印一致的 CARLA client/server 版本、`63526` 的 `state_dim`、非零图像
+统计量，并完成 10 个 step。
 
-<details>
-<summary><strong>常见安装问题</strong></summary>
+## 训练 Pixel SAC
 
-- `ModuleNotFoundError: carla`：确认已经激活 `carla37`，然后重新安装
-  `$CARLA_ROOT/PythonAPI/carla/dist/` 中的准确版本 wheel。
-- `*.whl is not a supported wheel`：确认 `python --version` 为 Linux x86_64
-  平台上的 Python 3.7，并检查 `python -m pip --version` 不低于 20.3。
-- `connection refused` 或连接超时：等待 CARLA 完成启动，确认终端 A 仍在运行，
-  并检查端口 `2000`、`2001` 是否被占用。
-- CARLA 启动后退出：运行 `nvidia-smi` 检查 NVIDIA 驱动是否可见，然后重试无界面
-  低画质启动命令。
-- Client 与 Server 版本不一致：卸载环境中单独安装的 `carla`，重新安装 CARLA
-  0.9.13 安装包自带的 wheel。
-
-</details>
-
-## 训练
+先在 Town01 空场景课程上训练，再增加常规交通：
 
 ```bash
-# SAC + 原始奖励
-python scripts/train.py --algo sac --reward legacy --logger tensorboard
-
-# TD3 + 防静止塌缩科研奖励 + 两种日志后端
-python scripts/train.py --algo td3 --reward research_v2 --logger both --wandb-mode offline
-
-# 从 checkpoint 恢复 DDPG
-python scripts/train.py --algo ddpg --checkpoint /path/to/ddpg_ckpt.pt
-
-# PPO / A2C 从 CARLA 收集 fresh rollout
-python scripts/train_on_policy.py --algo ppo --total-timesteps 1000000
-
-# 使用 CARLA Traffic Manager 采集专家数据
-python scripts/collect_dataset.py \
-  --policy autopilot \
-  --transitions 100000 \
-  --output artifacts/datasets/town05_autopilot.npz
-
-# 对运行中的 server 执行真实 connection/reset/step 冒烟
-python scripts/smoke_carla.py --port 2000 --town Town05 --steps 3
-
-# Offline RL 使用带版本和元数据的 .npz transition dataset
-python scripts/train_offline.py --algo td3_bc --dataset /path/to/transitions.npz
-python scripts/train_offline.py --algo cql --dataset /path/to/transitions.npz
-python scripts/train_offline.py --algo iql --dataset /path/to/transitions.npz
-
-# BC 只需 states/actions；GAIL、AIRL 还会在 CARLA 中收集 policy rollout
-python scripts/train_imitation.py --algo bc --expert-dataset /path/to/expert.npz
-python scripts/train_imitation.py --algo gail --expert-dataset /path/to/expert.npz
-python scripts/train_imitation.py --algo airl --expert-dataset /path/to/expert.npz
+python scripts/train.py \
+  --benchmark nocrash_train_empty_v0 \
+  --algo sac --network Pixel_SAC \
+  --total-timesteps 100000 \
+  --minimal-size 1500 --batch-size 128 --buffer-size 30000 \
+  --checkpoint-interval 10000 \
+  --logger tensorboard \
+  --run-name nocrash/pixel_sac_empty_seed0 \
+  --seed 0
 ```
 
-要端到端验证四条代表性科研链路，先在终端 A 启动 CARLA，再在终端 B 运行有限预算的
-集成冒烟：
+Town01 常规交通使用 `--benchmark nocrash_train_v0`。恢复训练时传入最后一个
+checkpoint，并把 `total-timesteps` 设置为更大的绝对步数：
 
 ```bash
-# 终端 A
-cd "$CARLA_ROOT"
-./CarlaUE4.sh -RenderOffScreen -quality_level=Low-prefernvidia
-
-# 终端 B，在仓库根目录执行
-conda activate carla37
-CARLA_PORT=2000 scripts/run_research_smoke.sh
+python scripts/train.py \
+  --checkpoint artifacts/runs/nocrash/pixel_sac_empty_seed0/checkpoints/sac_ckpt_last.pt \
+  --total-timesteps 200000
 ```
 
-该脚本先采集一份小型专家数据集，再依次运行 SAC、PPO、BC 和 TD3+BC，并将
-TensorBoard 日志与 checkpoint 写入 `artifacts/research-smoke/`。可通过
-`SMOKE_TRANSITIONS`、`SMOKE_TIMESTEPS` 和 `SMOKE_UPDATES` 调整有限预算。它只验证
-集成正确性，不代表算法性能；固定 baseline 协议见
-[`docs/experiments.md`](docs/experiments.md)。
+每条 transition 包含两个 `63,526` 字节的观测；30,000 条 replay 仅 states 就约
+占 3.8 GB。应根据机器内存设置 buffer，不能直接照搬大规模论文参数。
 
-实验输出位于 `artifacts/runs/<run-name>/`，默认不会提交到 Git。每次运行都会写入
-`run_config.json`。checkpoint 目录保存有限数量的不可变步数 checkpoint、
-`checkpoint_manifest.json` 和 `*_ckpt_last.pt` 别名。新 checkpoint 内嵌完整配置、
-Git commit、全局步数、RNG、软硬件信息与 CARLA client/server 版本；评测会自动读取
-算法和模型维度，不再盲目使用默认配置。
+## 在相同协议验证
 
-Version 2 dataset 保存 `states`、`actions`、`rewards`、`next_states`、
-`terminals`、`timeouts`、`episode_ids`、`costs` 与 JSON 元数据。训练使用的
-`dones` 只表示真正 terminal，因此 timeout 可以正确 bootstrap。旧五字段数据仍可
-读取，但 timeout 语义会标记为未知。BC 与 GAIL 只要求 `states/actions`，AIRL 要求
-完整 transition。
-
-默认 `signed_3d` 与旧模型兼容：负油门或负刹车表示对应执行器不激活。新实验可以使用
-`longitudinal_2d`，正纵向动作为油门，负纵向动作为刹车。dataset 元数据会阻止两种
-动作表示被静默混用。
+先跑一条路线、一个天气：
 
 ```bash
-python scripts/train.py --algo sac --action-mode longitudinal_2d
+python scripts/evaluate.py \
+  --checkpoint /path/to/sac_ckpt_last.pt \
+  --benchmark nocrash_empty_v0 \
+  --routes 1 --weathers 1 --logger tensorboard
+```
+
+确认链路后，在三种交通密度下执行全部 150 个 Town02 episode：
+
+```bash
+python scripts/evaluate.py \
+  --checkpoint /path/to/sac_ckpt_last.pt \
+  --suite nocrash_0915_v0 \
+  --logger tensorboard
+```
+
+所有算法必须使用同一 checkpoint 选择规则、路线、天气、交通量、图像协议和随机
+种子。报告保存在 `artifacts/evaluations/`，并带 checkpoint SHA-256 与完整元数据。
+
+## 日志与曲线
+
+TensorBoard 默认可用：
+
+```bash
+tensorboard --logdir artifacts/runs --port 6006
+```
+
+启用 Weights & Biases：
+
+```bash
+python -m pip install -r requirements-wandb.txt
+wandb login
+python scripts/train.py \
+  --benchmark nocrash_train_empty_v0 --algo sac \
+  --logger both --wandb-mode online --run-name nocrash/pixel_sac_seed0
+```
+
+从已完成实验导出 PNG/CSV：
+
+```bash
+python scripts/export_curves.py \
+  --run-dir artifacts/runs/nocrash/pixel_sac_empty_seed0 \
+  --benchmark-report artifacts/evaluations/nocrash_empty_v0/sac/report.json
 ```
 
 ## 修改科研代码
 
-主要扩展入口保持直接：
-
-| 目标 | 修改位置 |
+| 修改内容 | 主要文件 |
 | --- | --- |
-| 修改 SAC 或注意力模型 | [`carla_rl_lab/algorithms/sac.py`](carla_rl_lab/algorithms/sac.py) |
-| 修改 TD3 / DDPG | [`carla_rl_lab/algorithms/td3.py`](carla_rl_lab/algorithms/td3.py) / [`ddpg.py`](carla_rl_lab/algorithms/ddpg.py) |
-| 修改 PPO / A2C | [`carla_rl_lab/algorithms/on_policy.py`](carla_rl_lab/algorithms/on_policy.py) |
-| 修改 Offline RL | [`carla_rl_lab/algorithms/offline.py`](carla_rl_lab/algorithms/offline.py) |
-| 修改模仿学习 | [`carla_rl_lab/algorithms/imitation.py`](carla_rl_lab/algorithms/imitation.py) |
-| 设计奖励函数 | [`carla_rl_lab/rewards/profiles.py`](carla_rl_lab/rewards/profiles.py) |
-| 修改观测输入 | [`carla_rl_lab/observations/vector.py`](carla_rl_lab/observations/vector.py) |
-| 修改在线训练循环 | [`scripts/train.py`](scripts/train.py) |
-| 定义 benchmark | [`carla_rl_lab/benchmarks/specs.py`](carla_rl_lab/benchmarks/specs.py) |
+| Pixel encoder 或 SAC 公式 | [`carla_rl_lab/algorithms/sac.py`](carla_rl_lab/algorithms/sac.py) |
+| 观测字段与打包 | [`carla_rl_lab/observations/vector.py`](carla_rl_lab/observations/vector.py) |
+| Reward 各项 | [`carla_rl_lab/rewards/profiles.py`](carla_rl_lab/rewards/profiles.py) |
+| 相机、路线、PID、终止 | [`carla_rl_lab/envs/carla_env.py`](carla_rl_lab/envs/carla_env.py) |
+| Benchmark 交通、路线、天气 | [`carla_rl_lab/benchmarks/specs.py`](carla_rl_lab/benchmarks/specs.py) |
+| 指标和成功规则 | [`carla_rl_lab/evaluation/evaluator.py`](carla_rl_lab/evaluation/evaluator.py) |
 
-奖励路径就是一个普通 Python 函数。reward 名称采用版本化管理，修改公式不会静默改变
-旧实验：
+新增 reward 应同时返回标量与命名分项。新增观测应建立新的协议名和 shape，不能悄悄
+改变 `pixel_v1` 的含义。
 
-```python
-def research_v1_reward(obs, done, info, desired_speed):
-    terms = {
-        "reward/speed_tracking": ...,
-        "reward/lane_centering": ...,
-        "reward/collision": ...,
-    }
-    return sum(terms.values()), terms
-```
-
-每个奖励项都会写入 TensorBoard 和 W&B，奖励修改的影响不必只靠一条总 return 曲线猜测。
-
-每个已实现算法的原理、公式到源码的对应关系、启动命令、关键指标和当前实验结果统一收录
-在 [`算法指南`](docs/algorithms/README.md) 中。
-
-## 实验日志
+## 其他训练入口
 
 ```bash
-# TensorBoard 已包含在默认依赖中
-tensorboard --logdir artifacts/runs
+# 在同一个 Town01 协议中采集专家数据
+python scripts/collect_dataset.py \
+  --benchmark nocrash_train_empty_v0 --policy autopilot \
+  --transitions 100000 --output artifacts/datasets/nocrash_expert.npz
 
-# W&B 为可选依赖
-pip install -r requirements-wandb.txt
-python scripts/train.py --algo sac --logger wandb --wandb-mode online
+# 离线/模仿 runner（当前为 MLP baseline，像素 adapter 待完成）
+python scripts/train_offline.py --algo td3_bc --dataset artifacts/datasets/nocrash_expert.npz
+python scripts/train_imitation.py --algo bc --expert-dataset artifacts/datasets/nocrash_expert.npz
+
+# 64 step 端到端集成矩阵，不是性能 benchmark
+scripts/run_research_smoke.sh
 ```
 
-日志包含 actor/critic loss、entropy、Q 值、episode return、safety cost、episode 长度、油门/方向/刹车分布、注意力热图和 reward 分项。
+每种算法的原理、启动方法、日志与结果状态见[算法索引](docs/algorithms/README.md)，
+benchmark 定义见 [docs/benchmarks.md](docs/benchmarks.md)，结果报告约束见
+[docs/experiments.md](docs/experiments.md)。
 
-### 最新 Pilot 结果
+## TODO
 
-第一次 SAC pilot 使用 `research_v1`、seed 0，在 CARLA 0.9.15 中训练 10k steps，
-并完成 `lane_following_v0` 全部 5 个评测 seed。策略虽然都运行到 500-step horizon，
-但学会了静止：平均速度仅 `0.021 m/s`，静止率 `97.12%`，成功率 `0%`。该负结果会
-完整保留，不会隐藏；它直接推动了版本化 `research_v2` reward，然后才扩大训练规模。
+- [ ] 使用三个完整训练随机种子验证 CARLA 0.9.15，并发布 checkpoint 与原始
+  TensorBoard/W&B 导出。
+- [ ] 为 TD3、DDPG、PPO、A2C、离线 RL 和模仿学习补齐像素编码器，在同一
+  NoCrash suite 上实际训练每个算法。
+- [ ] 每个 checkpoint 报告 loss、return、路线完成度、成功率、分类碰撞、红灯与
+  堵塞指标。
+- [ ] 对相机历史、路线表示、速度、转角及未来传感器融合观测做有版本的消融，不把
+  模拟器专有真值输入策略。
+- [ ] 为每种 RL 算法编写包含公式、数据流、启动、排错、验证和结果解读的详细教程。
+- [ ] 提供一键安装、环境诊断和锁定版本的 CARLA 0.9.15 Docker 镜像。
+- [ ] 建立 CPU CI，并单独调度真实 CARLA 集成测试。
 
-<p align="center">
-  <img alt="SAC pilot episode return" width="49%" src="docs/results/sac_research_v1_seed0_10k/episode_reward.png">
-  <img alt="SAC pilot losses" width="49%" src="docs/results/sac_research_v1_seed0_10k/training_losses.png">
-</p>
+## License 与引用
 
-曲线源数据、完整配置、checkpoint SHA-256、逐 seed benchmark 结果与 CARLA 版本位于
-[`docs/results/sac_research_v1_seed0_10k`](docs/results/sac_research_v1_seed0_10k/)。
-
-## Benchmark
-
-已接入论文常用的 Town05 Short/Long、Longest6/v2、CARLA Leaderboard 1.x 和
-Bench2Drive 220。CoRL2017 与 NoCrash 属于 CARLA 0.8.x 旧协议，只登记协议，
-不会在 0.9.x 上用随机出生点冒充其结果。
-
-```bash
-python scripts/evaluate_paper.py --list
-
-# 只预检查一条 Bench2Drive 路线，不启动评测
-python scripts/evaluate_paper.py \
-  --benchmark bench2drive220 \
-  --carla-root /path/to/CARLA_0.9.15 \
-  --agent /path/to/leaderboard_agent.py \
-  --agent-config /path/to/checkpoint \
-  --route-subset 0
-```
-
-现有向量环境另保留一个轻量内部 suite，用于控制 sanity、交通密度、天气和跨地图泛化：
-
-| 协议 | 地图 | 车辆 / 行人 | 信号灯 | 天气 |
-| --- | --- | ---: | --- | --- |
-| `lane_following_empty_v0` | Town05 | 0 / 0 | 全绿冻结 | ClearNoon |
-| `lane_following_v0` | Town05 | 50 / 0 | 全绿冻结 | ClearNoon |
-| `urban_traffic_v0` | Town03 | 60 / 20 | 正常工作 | ClearNoon |
-| `dense_traffic_v0` | Town05 | 100 / 30 | 正常工作 | ClearNoon |
-| `adverse_weather_v0` | Town05 | 50 / 10 | 正常工作 | HardRainNoon |
-| `town02_generalization_v0` | Town02 | 40 / 10 | 正常工作 | ClearNoon |
-
-```bash
-python scripts/evaluate.py \
-  --algo sac \
-  --checkpoint /path/to/sac_ckpt.pt \
-  --benchmark lane_following_v0
-
-# 执行五个轻量内部协议并生成 suite 汇总
-python scripts/evaluate.py \
-  --algo sac \
-  --checkpoint /path/to/sac_ckpt.pt \
-  --suite carla_lightweight_v0
-```
-
-报告包含 return/cost、行驶距离、时域存活比例、速度、车道偏移、静止/超速比例、
-碰撞/驶出道路率和每公里违规数。不同协议与算法的 JSON 分目录写入
-`artifacts/evaluations/`。详细指标语义及其与官方 CARLA Leaderboard 的边界见
-[`docs/benchmarks.md`](docs/benchmarks.md)。其中也说明了版本要求、Leaderboard
-agent 接口，以及为什么当前 lane-following checkpoint 不能直接当成官方路线评测结果。
-
-## 算法规划
-
-| 数据来源 | 类型 | 算法 | 状态 |
-| --- | --- | --- | --- |
-| Online | Off-policy | SAC、TD3、DDPG | 已实现 + CPU 测试 |
-| Online | On-policy | PPO、A2C | 已实现 + CPU 测试 |
-| Offline | Offline RL | CQL(H)、IQL、TD3+BC | 已实现 + CPU 测试 |
-| Expert / mixed | Imitation | BC、GAIL、AIRL | 已实现 + CPU 测试 |
-
-On-policy、offline 和 imitation 算法分别使用 rollout、dataset 和 mixed runner，
-不会强行塞入 replay-buffer 循环。
-
-## 项目结构
-
-```text
-carla_rl_lab/
-  algorithms/       # 网络、更新公式、小型算法注册表
-  benchmarks/       # 固定协议字典
-  buffers/          # Replay buffer
-  envs/             # CARLA 环境与工厂函数
-  evaluation/       # 普通 benchmark 函数
-  logging/          # 单一 TensorBoard/W&B logger
-  observations/     # 普通观测编码函数
-  rewards/          # 普通奖励函数与 profile
-scripts/
-  train.py           # 在线 off-policy 主循环
-  train_on_policy.py # 在线 rollout 主循环
-  train_offline.py   # 固定 dataset 主循环
-  train_imitation.py # 纯专家或专家/在线混合主循环
-  collect_dataset.py # 带版本的 random/autopilot 数据采集
-  smoke_carla.py     # 真实 server connection/reset/step 冒烟
-  run_research_smoke.sh # SAC/PPO/BC/TD3+BC 集成冒烟
-  export_curves.py   # TensorBoard 到 CSV/JSON/PNG 结果导出器
-  evaluate.py        # 轻量确定性评测入口
-  evaluate_paper.py  # 官方 Leaderboard/Bench2Drive 预检与启动入口
-  launch_carla.sh    # 已记录的 CARLA 启动命令
-tests/               # 快速 CPU 冒烟测试
-artifacts/           # 不提交的日志、checkpoint、报告
-```
-
-## Roadmap / TODO
-
-v0.1 基础已经完成：透明实现 SAC/TD3/DDPG、可编辑 reward 分项日志、
-TensorBoard/W&B 和第一个固定 benchmark。后续工作按照实验可复现性排序，而不是单纯
-追求算法数量。
-
-### 1. 补充并验证 CARLA 0.9.15
-
-- [ ] 增加 CARLA 0.9.15 安装流程，下载、解压、Python API、启动和故障排查需要与
-  0.9.13 教程同样详细。
-- [x] 在 dataset/checkpoint 元数据中自动记录 CARLA client/server 版本。
-- [ ] 分别在 CARLA 0.9.13 和 0.9.15 执行连接、reset/step、单 episode 与
-  `lane_following_v0` 验证。
-- [ ] 发布包含 Python、Ubuntu、CARLA、地图和已知限制的兼容性矩阵。当前代码已经
-  兼容 0.9.15；已于 2026-08-12 通过本地 client/server connection、reset 和三步
-  smoke，完整训练与 benchmark 验证仍待完成。
-
-### 2. 补全主流 RL 算法类型
-
-- [x] Online on-policy：先实现 PPO，再实现 A2C，并使用独立 rollout buffer 和
-  runner。
-- [x] Offline RL：先定义 dataset 格式，再通过独立 dataset runner 实现 TD3+BC、
-  CQL 和 IQL。
-- [x] Imitation learning：先实现 BC，专家轨迹格式稳定后再评估 GAIL/AIRL。
-- [x] 每个新算法必须同时提供 `act/update/save/load`、正确的 runner、默认配置、
-  CPU 冒烟测试和 CARLA 训练命令。
-
-### 3. 实际训练每个算法并发布可复现 baseline
-
-- [ ] 每个已实现算法至少使用 3 个训练种子在 CARLA 中完整训练，并使用
-  `lane_following_v0` 的全部 5 个种子评测 checkpoint。
-- [x] 在启动高成本 baseline 前，增加 SAC、PPO、BC、TD3+BC 的有限预算 CARLA
-  集成冒烟。
-- [ ] 每次实验记录 Git commit、完整配置、随机种子、环境版本、reward profile、
-  训练时间和硬件信息。
-- [ ] 最终与最佳 checkpoint 通过 GitHub Releases 发布，不把大型二进制文件直接
-  提交到 Git 历史。
-- [ ] 提交精简的 JSON/CSV benchmark 结果、训练曲线、mean/std 汇总表和每个算法的
-  失败案例分析。
-
-### 4. 完善并验证状态表示
-
-- [ ] 记录每个 observation 字段、向量区间、shape、单位、数值范围和更新频率。
-- [ ] 增加明确的归一化与裁剪统计，避免不同传感器的原始数值尺度直接混合。
-- [ ] 针对驾驶任务中的部分可观测问题，对比单帧、frame stacking 和 recurrent
-  state 表示。
-- [ ] 对 ego state、lane information、waypoints、LiDAR 和 risk field 做消融实验，
-  同时检查信息泄漏与传感器缺失情况。
-
-### 5. 为每个 RL 算法编写详细教程
-
-- [x] 每个已实现算法增加一份 `docs/algorithms/<algorithm>.md`。
-- [ ] 讲清论文与目标函数、关键公式、网络结构、replay/rollout 数据流，以及公式到
-  源码行的准确对应关系。
-- [ ] 包含安装、训练、断点恢复、评测、checkpoint 下载、预期指标/曲线、超参数建议
-  和常见故障排查。
-- [ ] 提供修改 policy 结构与 reward 设计的最小科研练习，使教程不仅能复现实验，
-  也能直接支撑二次研究。
-
-### 6. 提供一键安装与 Docker 环境
-
-- [ ] 增加类似 `scripts/setup.sh --carla 0.9.15` 的单条安装命令，自动创建 Python
-  环境、安装项目依赖和匹配的 CARLA API，同时在终端中清楚展示每个操作。
-- [ ] 增加环境诊断工具，检查操作系统、Python、NVIDIA 驱动、CUDA/GPU 可见性、
-  CARLA client 版本、server 连接、必要端口和常见版本冲突，并提供可执行的修复提示。
-- [ ] 分别为 CARLA 0.9.13 和 0.9.15 提供锁定版本的环境定义，保证全新安装不会受
-  未固定的间接依赖影响。
-- [ ] 提供支持 NVIDIA GPU 的 Docker image 与 Docker Compose 工作流，能够启动
-  CARLA server 和 CarlaRLLab trainer，并挂载 dataset、checkpoint 与实验日志。
-- [ ] 在干净机器和 CI 中验证本地与 Docker 两条安装路径；目标流程是一条安装命令，
-  再加一条 smoke-test 命令即可开始使用。
-
-Docker 是本地安装的补充，不会取代本地开发。研究者仍然可以直接修改源码并运行实验，
-不需要先学习一套容器专用框架。
-
-## 冒烟测试
-
-核心测试不需要启动 CARLA server：
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-## 参与贡献
-
-新增代码应当能从训练入口快速跟读。无状态变换优先使用函数；只有确实持有状态时才引入 class；新增算法或科研接口需要提供 CPU 冒烟测试。
-
-## 开源许可
-
-CarlaRLLab 使用 [MIT License](LICENSE) 开源。
-
-CarlaRLLab 是基于 CARLA 构建的独立科研项目，不是 CARLA 官方项目。
+CarlaRLLab 使用 [MIT License](LICENSE)。内置 NoCrash 路线来自 RLfOLD 官方仓库的
+适配，详情见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。CARLA 与引用
+论文仍遵循其各自 license 和引用要求。

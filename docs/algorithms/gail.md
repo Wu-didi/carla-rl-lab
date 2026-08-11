@@ -20,13 +20,12 @@ r_imitation = softplus(D_logit(s_pi,a_pi))
 
 ```bash
 python scripts/train_imitation.py \
+  --benchmark nocrash_train_empty_v0 \
   --algo gail \
-  --expert-dataset artifacts/datasets/v0.1/town05_autopilot_seed0_100k.npz \
+  --expert-dataset artifacts/datasets/nocrash_expert_seed0_100k.npz \
   --total-timesteps 100000 --rollout-steps 2048 \
-  --checkpoint-interval 10000 --town Town05 --vehicles 50 --walkers 0 \
-  --traffic off --view-mode none --max-time-episode 500 \
-  --reward research_v2 --seed 0 --logger tensorboard \
-  --run-name v0.1/gail_town05_seed0
+  --checkpoint-interval 10000 --seed 0 --logger tensorboard \
+  --run-name nocrash/gail_mlp_seed0
 ```
 
 The dataset action representation is loaded automatically and must match the
@@ -39,3 +38,4 @@ actor/value losses, entropy, KL, clip fraction, and environment benchmark
 metrics. Persistent 100% discriminator accuracy usually means poor reward
 signal rather than success. CPU mixed-batch update/checkpoint tests pass;
 formal CARLA training and curves are **Pending**.
+The current policy/discriminator are MLPs; pixel-native GAIL remains pending.

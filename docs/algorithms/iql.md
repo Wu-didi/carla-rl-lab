@@ -24,9 +24,9 @@ out-of-distribution action queries.
 ```bash
 python scripts/train_offline.py \
   --algo iql \
-  --dataset artifacts/datasets/v0.1/town05_autopilot_seed0_100k.npz \
+  --dataset artifacts/datasets/nocrash_expert_seed0_100k.npz \
   --updates 100000 --batch-size 256 --checkpoint-interval 10000 \
-  --seed 0 --logger tensorboard --run-name v0.1/iql_town05_seed0
+  --seed 0 --logger tensorboard --run-name nocrash/iql_mlp_seed0
 ```
 
 ## Metrics And Results
@@ -35,3 +35,4 @@ Inspect `value_loss`, both critic losses, `actor_loss`, mean `advantage`, and
 `actor_weight`. Saturated weights indicate that `iql_beta` or reward scale may
 be too aggressive. CPU update/checkpoint tests pass. Formal dataset training,
 CARLA evaluation, and curves are **Pending**.
+The current IQL networks are MLPs; pixel-native training remains pending.

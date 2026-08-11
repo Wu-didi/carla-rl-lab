@@ -1,49 +1,33 @@
 # Algorithms
 
-This project is research-first: algorithm files should stay readable and easy
-to edit. Avoid hiding actor/critic/loss details behind heavy wrappers.
+Algorithm modules keep actor, critic, and loss equations visible. The registry
+classifies methods by data source, update family, and runner so incompatible
+training loops fail early.
 
-## Taxonomy
-
-`online/offline` and `on-policy/off-policy` describe different things:
-
-- `data_source=online`: collect transitions from CARLA during training.
-- `data_source=offline`: train from a fixed dataset without CARLA interaction.
-- `family=on_policy`: update from fresh rollouts, such as PPO and A2C.
-- `family=off_policy`: update from replay data, such as SAC, TD3, and DDPG.
-- `family=offline_rl`: learn from a fixed dataset, such as CQL, IQL, and TD3+BC.
-- `family=imitation`: learn from demonstrations, such as BC, GAIL, and AIRL.
-
-The `runner` metadata prevents an algorithm from being connected to the wrong
-training loop. The v1 trainer is an `off_policy` runner.
-
-## v1 Support
-
-| Algorithm | Family | Status | Notes |
+| Data source | Family | Algorithms | Runner |
 | --- | --- | --- | --- |
-| SAC | off-policy | implemented | Editable MLP or semantic-attention actor and critics. |
-| PPO / A2C | on-policy | implemented | Dedicated rollout buffer, GAE, clipped PPO and synchronous A2C losses. |
-| TD3 | off-policy | implemented | Compact baseline with twin critics, delayed actor update, target policy smoothing. |
-| DDPG | off-policy | implemented | Compact deterministic actor/critic baseline. |
-| BC / GAIL / AIRL | imitation | implemented | Expert-only BC and PPO-based adversarial mixed runner. |
-| CQL(H) / IQL / TD3+BC | offline RL | implemented | Versioned `.npz` dataset API and fixed-dataset runner. |
+| online | off-policy | SAC, TD3, DDPG | `scripts/train.py` |
+| online | on-policy | PPO, A2C | `scripts/train_on_policy.py` |
+| offline | offline RL | TD3+BC, CQL, IQL | `scripts/train_offline.py` |
+| expert/mixed | imitation | BC, GAIL, AIRL | `scripts/train_imitation.py` |
 
-## Dataset Format
+SAC currently owns the `pixel_v1` CNN/route encoder. Other algorithms retain
+small MLP implementations while their shared pixel adapter is pending.
 
-Use `scripts/collect_dataset.py` to create datasets from Traffic Manager or a
-random policy. Schema v2 stores equally sized `states`, `actions`, `rewards`,
-`next_states`, `terminals`, `timeouts`, `episode_ids`, and `costs` arrays plus
-JSON metadata. Training exposes `dones=terminals`, allowing value targets to
-bootstrap across time-limit truncations. BC and GAIL accept `states/actions`;
-AIRL requires complete transitions. Legacy five-field files remain readable,
-but cannot recover whether an old `done` was a terminal or timeout.
+## Dataset Schema
 
-## Adding an Algorithm
+Schema v2 stores `states`, `actions`, `rewards`, `next_states`, `terminals`,
+`timeouts`, `episode_ids`, and `costs`, plus JSON metadata. Pixel states remain
+`uint8` on disk and in replay. Training exposes `dones=terminals`, allowing
+targets to bootstrap across time-limit truncations.
 
-1. Create a module such as `carla_rl_lab/algorithms/td3.py`.
-2. Implement `BaseAgent.act`, `BaseAgent.update`, `BaseAgent.save`, and `BaseAgent.load`.
-3. Register it with `register_algorithm(AlgorithmSpec(...))`.
-4. Import the module in `carla_rl_lab/algorithms/__init__.py`.
+## Adding An Algorithm
 
-Keep neural network definitions next to the algorithm implementation unless
-they are shared by multiple algorithms.
+1. Add one module under `carla_rl_lab/algorithms/`.
+2. Implement `act`, `update`, `save`, and `load` on `BaseAgent`.
+3. Register one `AlgorithmSpec` with the correct runner.
+4. Import the module from `carla_rl_lab/algorithms/__init__.py`.
+5. Add a finite-update and checkpoint-roundtrip test, then a named CARLA smoke.
+
+Keep networks beside the algorithm until two real implementations share the
+same behavior. Avoid inheritance chains for code reuse.

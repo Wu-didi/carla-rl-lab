@@ -10,16 +10,13 @@ transitions="${SMOKE_TRANSITIONS:-64}"
 timesteps="${SMOKE_TIMESTEPS:-64}"
 updates="${SMOKE_UPDATES:-8}"
 output_root="${SMOKE_OUTPUT:-${project_root}/artifacts/research-smoke}"
-dataset_path="${output_root}/town05_autopilot.npz"
+dataset_path="${output_root}/nocrash_town01_autopilot.npz"
 
 mkdir -p "${output_root}"
 
 common_env=(
-  --town Town05
+  --benchmark nocrash_train_empty_v0
   --port "${carla_port}"
-  --vehicles 0
-  --walkers 0
-  --traffic off
   --view-mode none
   --max-time-episode "${timesteps}"
 )
@@ -29,14 +26,11 @@ echo "[1/5] Collecting ${transitions} CARLA transitions"
   --policy autopilot \
   --transitions "${transitions}" \
   --output "${dataset_path}" \
-  --town Town05 \
+  --benchmark nocrash_train_empty_v0 \
   --port "${carla_port}" \
-  --vehicles 0 \
-  --walkers 0 \
-  --traffic off \
   --view-mode none \
-  --action-mode longitudinal_2d \
-  --reward research_v1
+  --action-mode target_speed_2d \
+  --reward nocrash_v0
 
 echo "[2/5] Running SAC online smoke"
 "${python_bin}" scripts/train.py \
@@ -47,8 +41,8 @@ echo "[2/5] Running SAC online smoke"
   --buffer-size 1000 \
   --hidden-dim 32 \
   --checkpoint-interval 32 \
-  --action-mode longitudinal_2d \
-  --reward research_v1 \
+  --action-mode target_speed_2d \
+  --reward nocrash_v0 \
   --logger tensorboard \
   --run-name "${output_root}/sac" \
   "${common_env[@]}"
@@ -62,8 +56,8 @@ echo "[3/5] Running PPO online smoke"
   --ppo-epochs 2 \
   --ppo-minibatch-size 8 \
   --checkpoint-interval 32 \
-  --action-mode longitudinal_2d \
-  --reward research_v1 \
+  --action-mode target_speed_2d \
+  --reward nocrash_v0 \
   --logger tensorboard \
   --run-name "${output_root}/ppo" \
   "${common_env[@]}"

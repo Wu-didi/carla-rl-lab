@@ -5,43 +5,58 @@ from typing import Dict, Tuple
 import numpy as np
 
 
-DEFAULT_FIELDS: Tuple[str, ...] = (
-    "ego_state",
-    "lane_info",
-    "risk_field",
-    "lidar",
-    "waypoints",
-)
+PIXEL_FIELDS: Tuple[str, ...] = ("image", "waypoints", "vehicle_measurements")
+DEFAULT_FIELDS = PIXEL_FIELDS
+
+
+def pixel_state_dim(image_size: int, frame_stack: int, num_waypoints: int) -> int:
+    """Return the packed size of RGB frames, route points, speed, and steer."""
+
+    return 3 * int(frame_stack) * int(image_size) ** 2 + 2 * int(num_waypoints) + 2
 
 
 def encode_observation(
     obs_dict: Dict[str, np.ndarray],
     expected_dim: int = 0,
-    risk_field_dim: int = 12,
     fields: Tuple[str, ...] = DEFAULT_FIELDS,
 ) -> np.ndarray:
-    """Flatten a CARLA observation dictionary and validate its size."""
+    """Pack the policy observation as uint8 for memory-efficient replay.
 
-    parts = []
-    for field in fields:
-        if field == "risk_field" and field not in obs_dict:
-            value = np.zeros(risk_field_dim, dtype=np.float32)
-        elif field not in obs_dict:
-            available = ", ".join(sorted(obs_dict))
-            raise KeyError(
-                "Missing observation field '{}'. Available fields: {}".format(
-                    field, available
-                )
-            )
-        else:
-            value = obs_dict[field]
-        parts.append(np.asarray(value, dtype=np.float32).reshape(-1))
+    Images stay in [0, 255]. Route coordinates are expected in [-1, 1].
+    Vehicle measurements contain normalized speed in [0, 1] and steer in
+    [-1, 1]. Telemetry fields such as global pose are deliberately excluded.
+    """
 
-    vector = np.concatenate(parts).astype(np.float32)
-    if expected_dim and vector.shape[0] != expected_dim:
-        raise ValueError(
-            "Observation dim mismatch: expected {}, got {}. Fields={}".format(
-                expected_dim, vector.shape[0], list(fields)
+    missing = [field for field in fields if field not in obs_dict]
+    if missing:
+        raise KeyError(
+            "Missing observation fields {}. Available fields: {}".format(
+                missing, ", ".join(sorted(obs_dict))
             )
         )
-    return vector
+
+    image = np.asarray(obs_dict["image"], dtype=np.uint8).reshape(-1)
+    waypoints = np.asarray(obs_dict["waypoints"], dtype=np.float32).reshape(-1)
+    measurements = np.asarray(
+        obs_dict["vehicle_measurements"], dtype=np.float32
+    ).reshape(-1)
+    if measurements.shape != (2,):
+        raise ValueError(
+            "vehicle_measurements must contain [normalized_speed, steer]"
+        )
+
+    route_bytes = np.rint((np.clip(waypoints, -1.0, 1.0) + 1.0) * 127.5)
+    speed_byte = np.rint(np.clip(measurements[0], 0.0, 1.0) * 255.0)
+    steer_byte = np.rint((np.clip(measurements[1], -1.0, 1.0) + 1.0) * 127.5)
+    auxiliary = np.concatenate(
+        [route_bytes, np.asarray([speed_byte, steer_byte], dtype=np.float32)]
+    ).astype(np.uint8)
+    packed = np.concatenate([image, auxiliary]).astype(np.uint8, copy=False)
+
+    if expected_dim and packed.shape[0] != expected_dim:
+        raise ValueError(
+            "Observation dim mismatch: expected {}, got {}".format(
+                expected_dim, packed.shape[0]
+            )
+        )
+    return packed

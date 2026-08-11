@@ -21,6 +21,7 @@ class Config:
     max_ego_spawn_times: int = 200
     view_mode: str = 'follow'  # 'top' or 'follow'
     traffic: str = 'off'  # 'on' or 'off'
+    weather: str = 'ClearNoon'
     lidar_max_range: float = 50.0
     max_nearby_vehicles: int = 5
     enable_risk_field: bool = True

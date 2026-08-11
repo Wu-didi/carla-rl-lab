@@ -24,11 +24,13 @@ def make_carla_env(cfg: Any) -> CarlaEnv:
             "max_ego_spawn_times": cfg.max_ego_spawn_times,
             "view_mode": cfg.view_mode,
             "traffic": cfg.traffic,
+            "weather": cfg.weather,
             "lidar_max_range": cfg.lidar_max_range,
             "max_nearby_vehicles": cfg.max_nearby_vehicles,
             "enable_risk_field": cfg.enable_risk_field,
             "risk_field_sectors": cfg.risk_field_sectors,
             "risk_field_alpha": cfg.risk_field_alpha,
             "reward_fn": reward_fn,
+            "seed": cfg.seed,
         }
     )

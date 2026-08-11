@@ -42,6 +42,12 @@ function and returns per-term logs.
 
 ## Benchmark Boundary
 
-A benchmark fixes environment overrides, seeds, and metrics. Reward is logged,
-but collision, off-road, success, speed, and cost metrics remain the primary
-way to compare algorithms across reward designs.
+The internal lightweight suite fixes environment overrides, seeds, and metrics.
+Reward is logged, but collision, off-road, success, speed, and cost metrics
+remain the primary way to compare algorithms across reward designs.
+
+Paper benchmarks stay on the other side of an explicit adapter boundary. Their
+route XML, scenario annotations, agent contract, evaluator, CARLA version, and
+native metrics come from Leaderboard or Bench2Drive. The project validates and
+launches those tools; it does not rename internal horizon survival as official
+route completion.

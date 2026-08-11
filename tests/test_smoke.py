@@ -8,9 +8,21 @@ from types import SimpleNamespace
 import numpy as np
 
 from carla_rl_lab.algorithms import create_agent, get_algorithm, list_algorithms
-from carla_rl_lab.benchmarks import get_benchmark, list_benchmarks
+from carla_rl_lab.benchmarks import (
+    apply_benchmark,
+    get_benchmark,
+    get_benchmark_suite,
+    get_paper_benchmark,
+    inspect_route_file,
+    list_benchmarks,
+    list_benchmark_suites,
+    list_paper_benchmarks,
+    prepare_paper_benchmark,
+    probe_paper_benchmark,
+)
 from carla_rl_lab.buffers import OfflineDataset, ReplayBuffer, RolloutBuffer
-from carla_rl_lab.evaluation import evaluate_benchmark
+from carla_rl_lab.config import Config
+from carla_rl_lab.evaluation import evaluate_benchmark, summarize_suite
 from carla_rl_lab.logging import ExperimentLogger
 from carla_rl_lab.observations import encode_observation
 from carla_rl_lab.rewards import build_reward_profile
@@ -83,6 +95,11 @@ class FakeAgent:
 class FakeEnv:
     def __init__(self):
         self.step_count = 0
+        self.seed_calls = []
+        self.dt = 0.1
+
+    def seed(self, seed):
+        self.seed_calls.append(seed)
 
     def reset(self):
         self.step_count = 0
@@ -92,7 +109,11 @@ class FakeEnv:
         self.step_count += 1
         done = self.step_count == 2
         info = {"termination_reason": "timeout" if done else None}
-        return vector_observation(), 1.0, 0.25, done, info
+        obs = vector_observation()
+        obs["ego_state"][0] = float(self.step_count)
+        obs["ego_state"][3] = 1.0
+        obs["lane_info"][1] = 0.2
+        return obs, 1.0, 0.25, done, info
 
 
 class CoreSmokeTest(unittest.TestCase):
@@ -268,18 +289,119 @@ class CoreSmokeTest(unittest.TestCase):
             self.assertTrue(any(name.startswith("events.out.tfevents") for name in os.listdir(log_dir)))
 
     def test_benchmark_evaluator(self):
-        self.assertIn("lane_following_v0", list_benchmarks())
+        self.assertEqual(
+            list_benchmarks(),
+            (
+                "adverse_weather_v0",
+                "dense_traffic_v0",
+                "lane_following_empty_v0",
+                "lane_following_v0",
+                "town02_generalization_v0",
+                "urban_traffic_v0",
+            ),
+        )
+        self.assertEqual(
+            list_benchmark_suites(),
+            ("carla_common_v0", "carla_lightweight_v0"),
+        )
+        self.assertEqual(len(get_benchmark_suite("carla_common_v0")), 5)
+        self.assertEqual(
+            get_benchmark_suite("carla_common_v0"),
+            get_benchmark_suite("carla_lightweight_v0"),
+        )
         spec = get_benchmark("lane_following_v0")
+        cfg = apply_benchmark(Config(), spec)
+        self.assertEqual(cfg.weather, "ClearNoon")
+        self.assertEqual(cfg.number_of_vehicles, 50)
+        env = FakeEnv()
         report = evaluate_benchmark(
             spec["name"],
-            FakeEnv(),
+            env,
             FakeAgent(),
             seeds=(0, 1),
             expected_dim=299,
         )
-        self.assertEqual(report["summary"]["benchmark/success_rate"], 1.0)
+        self.assertEqual(report["summary"]["benchmark/success_rate"], 0.0)
         self.assertEqual(report["summary"]["benchmark/return_mean"], 2.0)
         self.assertEqual(report["summary"]["benchmark/cost_mean"], 0.5)
+        self.assertEqual(report["summary"]["benchmark/distance_mean_m"], 2.0)
+        self.assertAlmostEqual(
+            report["summary"]["benchmark/lane_offset_mean_m"], 0.2
+        )
+        self.assertEqual(env.seed_calls, [0, 1])
+        suite_summary = summarize_suite({"first": report, "second": report})
+        self.assertEqual(suite_summary["suite/success_rate"], 0.0)
+
+    def test_paper_benchmark_registry_and_preflight(self):
+        self.assertIn("town05_long", list_paper_benchmarks())
+        self.assertIn("longest6_v2", list_paper_benchmarks())
+        self.assertIn("bench2drive220", list_paper_benchmarks())
+        self.assertEqual(get_paper_benchmark("bench2drive").expected_routes, 220)
+
+        legacy = prepare_paper_benchmark("nocrash", environment={})
+        self.assertFalse(legacy.ready)
+        self.assertIn("legacy", legacy.errors[0].lower())
+
+        with tempfile.TemporaryDirectory() as directory:
+            carla_root = os.path.join(directory, "CARLA_0.9.10")
+            leaderboard_root = os.path.join(directory, "leaderboard_root")
+            scenario_runner_root = os.path.join(directory, "scenario_runner")
+            routes = os.path.join(directory, "routes.xml")
+            scenarios = os.path.join(directory, "scenarios.json")
+            agent = os.path.join(directory, "agent.py")
+            os.makedirs(os.path.join(carla_root, "PythonAPI", "carla", "dist"))
+            os.makedirs(os.path.join(leaderboard_root, "leaderboard"))
+            os.makedirs(os.path.join(scenario_runner_root, "srunner"))
+            for path in (
+                os.path.join(carla_root, "CarlaUE4.sh"),
+                os.path.join(
+                    leaderboard_root, "leaderboard", "leaderboard_evaluator.py"
+                ),
+                scenarios,
+                agent,
+            ):
+                with open(path, "w") as output_file:
+                    output_file.write("\n")
+            with open(routes, "w") as output_file:
+                output_file.write(
+                    '<routes><route id="0" town="Town05">'
+                    '<waypoint x="0" y="0" z="0"/>'
+                    '</route></routes>'
+                )
+
+            manifest = inspect_route_file(routes)
+            self.assertEqual(manifest["route_count"], 1)
+            self.assertEqual(manifest["towns"], ["Town05"])
+
+            launch = prepare_paper_benchmark(
+                "town05_long",
+                agent=agent,
+                carla_root=carla_root,
+                leaderboard_root=leaderboard_root,
+                scenario_runner_root=scenario_runner_root,
+                routes=routes,
+                scenarios=scenarios,
+                environment={},
+            )
+            self.assertTrue(launch.ready)
+            self.assertIn("--trafficManagerPort=8000", launch.command)
+            self.assertIn("--scenarios={}".format(scenarios), launch.command)
+            self.assertTrue(launch.warnings)
+            self.assertTrue(probe_paper_benchmark(launch).ready)
+
+            bench_launch = prepare_paper_benchmark(
+                "bench2drive220",
+                agent=agent,
+                carla_root=carla_root,
+                leaderboard_root=leaderboard_root,
+                scenario_runner_root=scenario_runner_root,
+                routes=routes,
+                route_subset="0",
+                environment={},
+            )
+            self.assertTrue(bench_launch.ready)
+            self.assertIn("--traffic-manager-port=8000", bench_launch.command)
+            self.assertIn("--routes-subset=0", bench_launch.command)
 
 
 if __name__ == "__main__":

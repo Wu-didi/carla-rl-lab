@@ -18,6 +18,23 @@ import cv2, io, requests
 
 
 class CarlaEnv(gym.Env):
+    WEATHER_PRESETS = (
+        'ClearNoon',
+        'CloudyNoon',
+        'WetNoon',
+        'WetCloudyNoon',
+        'MidRainyNoon',
+        'HardRainNoon',
+        'SoftRainNoon',
+        'ClearSunset',
+        'CloudySunset',
+        'WetSunset',
+        'WetCloudySunset',
+        'MidRainSunset',
+        'HardRainSunset',
+        'SoftRainSunset',
+    )
+
     def __init__(self, params):
         self.params = params
         self.collision_sensor = None
@@ -35,6 +52,7 @@ class CarlaEnv(gym.Env):
         self.max_ego_spawn_times = params['max_ego_spawn_times']
         self.view_mode = params['view_mode']
         self.traffic = params['traffic']
+        self.weather = params.get('weather', 'ClearNoon')
         self.lidar_max_range = params['lidar_max_range']
         self.max_nearby_vehicles = params['max_nearby_vehicles']
         self.surrounding_vehicle_spawned_randomly = params['surrounding_vehicle_spawned_randomly']
@@ -52,10 +70,12 @@ class CarlaEnv(gym.Env):
 
         # 连接到Carla服务器并设置世界
         print('Connecting to Carla server...')
-        client = carla.Client('localhost', params['port'])
-        client.set_timeout(10.0)
-        self.world = client.load_world(params['town'])
-        self.world.set_weather(carla.WeatherParameters.ClearNoon)
+        self.client = carla.Client('localhost', params['port'])
+        self.client.set_timeout(10.0)
+        self.world = self.client.load_world(params['town'])
+        self.traffic_manager = self.client.get_trafficmanager()
+        self.seed(params.get('seed'))
+        self._set_weather(self.weather)
         print('Connection established!')
 
         # Get all predefined vehicle spawn points from the map
@@ -113,6 +133,26 @@ class CarlaEnv(gym.Env):
             self._PROMPT = ("Does the ego vehicle need to brake? only output 0 or 1, 0=no, 1=yes.")  # only output 0 or 1, 0=no, 1=yes.
             self._vlm_sess = requests.Session()
         print("Finish CarlaEnv initialized.")
+
+    def seed(self, seed=None):
+        self.np_random, resolved_seed = seeding.np_random(seed)
+        resolved_seed = int(resolved_seed)
+        device_seed = resolved_seed % (2**32)
+        random.seed(device_seed)
+        np.random.seed(device_seed)
+        if hasattr(self, 'traffic_manager'):
+            self.traffic_manager.set_random_device_seed(device_seed)
+        self._seed = resolved_seed
+        return [resolved_seed]
+
+    def _set_weather(self, preset_name):
+        if preset_name not in self.WEATHER_PRESETS:
+            raise ValueError(
+                "Unknown CARLA weather preset '{}'. Available presets: {}".format(
+                    preset_name, ', '.join(self.WEATHER_PRESETS)
+                )
+            )
+        self.world.set_weather(getattr(carla.WeatherParameters, preset_name))
 
     def _resize_keep_ar_cv(self, bgr: np.ndarray, target_max=384) -> np.ndarray:
         h, w = bgr.shape[:2]

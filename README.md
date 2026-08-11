@@ -42,7 +42,7 @@
 | CARLA control | Throttle, steering, brake |
 | Rewards | Legacy reward and editable `research_v1` function |
 | Tracking | TensorBoard, W&B online/offline, per-term reward logs |
-| Benchmark | Reproducible `lane_following_v0` protocol and JSON report |
+| Benchmark | Paper-standard launchers plus a lightweight internal suite |
 | Validation | CPU smoke tests for every algorithm, reward, logger, and evaluator |
 
 ## Explicit Training Paths
@@ -310,25 +310,52 @@ Logged signals include actor/critic losses, entropy and Q statistics, episode re
 
 ## Benchmark
 
-`lane_following_v0` fixes the environment and seeds for comparable results:
+Paper-standard launchers are available for Town05 Short/Long, Longest6/v2,
+CARLA Leaderboard 1.x, and Bench2Drive 220. CoRL2017 and NoCrash are registered
+as legacy CARLA 0.8.x protocols and are not silently approximated on 0.9.x.
 
-| Setting | Value |
-| --- | --- |
-| Town | Town05 |
-| Traffic vehicles | 50 |
-| Evaluation seeds | 0, 1, 2, 3, 4 |
-| Episode horizon | 500 steps |
-| Desired speed | 8 m/s |
-| Reward | `research_v1` |
+```bash
+python scripts/evaluate_paper.py --list
+
+# Validate a one-route Bench2Drive smoke command
+python scripts/evaluate_paper.py \
+  --benchmark bench2drive220 \
+  --carla-root /path/to/CARLA_0.9.15 \
+  --agent /path/to/leaderboard_agent.py \
+  --agent-config /path/to/checkpoint \
+  --route-subset 0
+```
+
+The existing vector environment also has a lightweight internal suite for
+control sanity, traffic density, weather, and map-generalization checks:
+
+| Protocol | Town | Vehicles / walkers | Signals | Weather |
+| --- | --- | ---: | --- | --- |
+| `lane_following_empty_v0` | Town05 | 0 / 0 | Green/frozen | ClearNoon |
+| `lane_following_v0` | Town05 | 50 / 0 | Green/frozen | ClearNoon |
+| `urban_traffic_v0` | Town03 | 60 / 20 | Active | ClearNoon |
+| `dense_traffic_v0` | Town05 | 100 / 30 | Active | ClearNoon |
+| `adverse_weather_v0` | Town05 | 50 / 10 | Active | HardRainNoon |
+| `town02_generalization_v0` | Town02 | 40 / 10 | Active | ClearNoon |
 
 ```bash
 python scripts/evaluate.py \
   --algo sac \
   --checkpoint /path/to/sac_ckpt.pt \
   --benchmark lane_following_v0
+
+# Run all five lightweight protocols and write an aggregate report
+python scripts/evaluate.py \
+  --algo sac \
+  --checkpoint /path/to/sac_ckpt.pt \
+  --suite carla_lightweight_v0
 ```
 
-The report contains return, cost, speed, episode length, collision rate, off-road rate, and success rate. JSON output is written to `artifacts/evaluations/`.
+Reports include return/cost, distance, horizon survival, speed, lane offset,
+stationary and overspeed ratios, collision/off-road rates, and infractions per
+kilometre. Output is isolated by protocol and algorithm under
+`artifacts/evaluations/`. See [the benchmark protocol](docs/benchmarks.md) for
+paper protocol/version requirements, agent compatibility, and metric semantics.
 
 ## Algorithm Scope
 
@@ -359,7 +386,8 @@ scripts/
   train_on_policy.py # Online rollout loop
   train_offline.py   # Fixed-dataset loop
   train_imitation.py # Expert-only or expert/online mixed loop
-  evaluate.py        # Deterministic benchmark entry point
+  evaluate.py        # Lightweight deterministic benchmark entry point
+  evaluate_paper.py  # Official Leaderboard/Bench2Drive adapter
   launch_carla.sh    # Remembered CARLA launch commands
 tests/               # Fast CPU smoke tests
 artifacts/           # Ignored runs, checkpoints, reports

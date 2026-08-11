@@ -41,7 +41,7 @@
 | CARLA 控制 | 油门、方向盘、刹车 |
 | 奖励 | 原始 legacy reward、可直接修改的 `research_v1` 函数 |
 | 日志 | TensorBoard、W&B 在线/离线、reward 分项日志 |
-| Benchmark | 可复现的 `lane_following_v0` 协议与 JSON 报告 |
+| Benchmark | 论文标准评测启动器与轻量内部 suite |
 | 验证 | 覆盖算法、奖励、日志和评测的 CPU 冒烟测试 |
 
 ## 明确分离的训练链路
@@ -306,25 +306,51 @@ python scripts/train.py --algo sac --logger wandb --wandb-mode online
 
 ## Benchmark
 
-`lane_following_v0` 固定环境与随机种子，保证结果具有可比性：
+已接入论文常用的 Town05 Short/Long、Longest6/v2、CARLA Leaderboard 1.x 和
+Bench2Drive 220。CoRL2017 与 NoCrash 属于 CARLA 0.8.x 旧协议，只登记协议，
+不会在 0.9.x 上用随机出生点冒充其结果。
 
-| 配置 | 值 |
-| --- | --- |
-| 地图 | Town05 |
-| 交通车辆 | 50 |
-| 评测种子 | 0、1、2、3、4 |
-| Episode 上限 | 500 steps |
-| 目标速度 | 8 m/s |
-| 奖励 | `research_v1` |
+```bash
+python scripts/evaluate_paper.py --list
+
+# 只预检查一条 Bench2Drive 路线，不启动评测
+python scripts/evaluate_paper.py \
+  --benchmark bench2drive220 \
+  --carla-root /path/to/CARLA_0.9.15 \
+  --agent /path/to/leaderboard_agent.py \
+  --agent-config /path/to/checkpoint \
+  --route-subset 0
+```
+
+现有向量环境另保留一个轻量内部 suite，用于控制 sanity、交通密度、天气和跨地图泛化：
+
+| 协议 | 地图 | 车辆 / 行人 | 信号灯 | 天气 |
+| --- | --- | ---: | --- | --- |
+| `lane_following_empty_v0` | Town05 | 0 / 0 | 全绿冻结 | ClearNoon |
+| `lane_following_v0` | Town05 | 50 / 0 | 全绿冻结 | ClearNoon |
+| `urban_traffic_v0` | Town03 | 60 / 20 | 正常工作 | ClearNoon |
+| `dense_traffic_v0` | Town05 | 100 / 30 | 正常工作 | ClearNoon |
+| `adverse_weather_v0` | Town05 | 50 / 10 | 正常工作 | HardRainNoon |
+| `town02_generalization_v0` | Town02 | 40 / 10 | 正常工作 | ClearNoon |
 
 ```bash
 python scripts/evaluate.py \
   --algo sac \
   --checkpoint /path/to/sac_ckpt.pt \
   --benchmark lane_following_v0
+
+# 执行五个轻量内部协议并生成 suite 汇总
+python scripts/evaluate.py \
+  --algo sac \
+  --checkpoint /path/to/sac_ckpt.pt \
+  --suite carla_lightweight_v0
 ```
 
-报告包含 return、cost、速度、episode 长度、碰撞率、驶出道路率和成功率，JSON 文件写入 `artifacts/evaluations/`。
+报告包含 return/cost、行驶距离、时域存活比例、速度、车道偏移、静止/超速比例、
+碰撞/驶出道路率和每公里违规数。不同协议与算法的 JSON 分目录写入
+`artifacts/evaluations/`。详细指标语义及其与官方 CARLA Leaderboard 的边界见
+[`docs/benchmarks.md`](docs/benchmarks.md)。其中也说明了版本要求、Leaderboard
+agent 接口，以及为什么当前 lane-following checkpoint 不能直接当成官方路线评测结果。
 
 ## 算法规划
 
@@ -355,7 +381,8 @@ scripts/
   train_on_policy.py # 在线 rollout 主循环
   train_offline.py   # 固定 dataset 主循环
   train_imitation.py # 纯专家或专家/在线混合主循环
-  evaluate.py        # 确定性评测入口
+  evaluate.py        # 轻量确定性评测入口
+  evaluate_paper.py  # 官方 Leaderboard/Bench2Drive 适配入口
   launch_carla.sh    # 已记录的 CARLA 启动命令
 tests/               # 快速 CPU 冒烟测试
 artifacts/           # 不提交的日志、checkpoint、报告

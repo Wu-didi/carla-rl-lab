@@ -85,6 +85,7 @@ class Config:
     max_episodes: int = 10000
     train_every_step: bool = True
     max_walker_spawn_attempts: int = 200
+    max_step_retries: int = 3
     checkpoint_keep: int = 5
     checkpoint_replay_buffer: bool = False
 

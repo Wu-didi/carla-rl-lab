@@ -91,7 +91,33 @@ def log_action_metrics(
     logger.log(metrics, step)
 
 
+def save_checkpoint(
+    agent,
+    cfg: Config,
+    checkpoint_dir: str,
+    global_step: int,
+    episode: int,
+    env,
+    replay_buffer: ReplayBuffer,
+) -> None:
+    trainer_state = {
+        "episode": episode,
+        "carla_versions": carla_versions(env),
+    }
+    if cfg.checkpoint_replay_buffer:
+        trainer_state["replay_buffer"] = replay_buffer.state_dict()
+    save_training_checkpoint(
+        agent, cfg, checkpoint_dir, global_step, trainer_state
+    )
+
+
 def train(cfg: Config) -> None:
+    if cfg.total_timesteps <= 0:
+        raise ValueError("total_timesteps must be positive")
+    if cfg.checkpoint_interval <= 0:
+        raise ValueError("checkpoint_interval must be positive")
+    if cfg.max_step_retries <= 0:
+        raise ValueError("max_step_retries must be positive")
     set_seed(cfg.seed)
     log_dir = runs_dir(cfg)
     os.makedirs(log_dir, exist_ok=True)
@@ -119,32 +145,50 @@ def train(cfg: Config) -> None:
             replay_state = trainer_state.get("replay_buffer")
             if replay_state is not None:
                 replay_buffer.load_state_dict(replay_state)
+            else:
+                print(
+                    "Checkpoint has no replay buffer; online data collection "
+                    "will warm up again before updates resume."
+                )
             print("Loaded model {}".format(cfg.pretrained_model_path))
 
         checkpoint_dir = os.path.join(log_dir, "checkpoints")
         last_checkpoint_step = global_step
+        last_episode = start_episode - 1
         for episode in range(start_episode, cfg.max_episodes):
+            if global_step >= cfg.total_timesteps:
+                break
+            last_episode = episode
             obs = env.reset(seed=cfg.seed + episode)
             done = False
             episode_reward = 0.0
             episode_cost = 0.0
             episode_steps = 0
             episode_actions = []
+            consecutive_step_failures = 0
 
-            while not done:
+            while not done and global_step < cfg.total_timesteps:
                 obs_vector = encode_observation(
                     obs, cfg.state_dim, cfg.risk_field_sectors
                 )
                 action = agent.act(obs_vector)
-                episode_actions.append(action)
 
                 try:
                     next_obs, reward, cost, done, info = env.step(action)
-                except Exception:
+                except Exception as exc:
                     traceback.print_exc()
+                    consecutive_step_failures += 1
+                    if consecutive_step_failures >= cfg.max_step_retries:
+                        raise RuntimeError(
+                            "CARLA step failed {} consecutive times".format(
+                                consecutive_step_failures
+                            )
+                        ) from exc
                     print("CARLA step failed; resetting environment")
-                    obs = env.reset()
+                    obs = env.reset(seed=cfg.seed + episode)
                     continue
+                consecutive_step_failures = 0
+                episode_actions.append(action)
 
                 next_obs_vector = encode_observation(
                     next_obs, cfg.state_dim, cfg.risk_field_sectors
@@ -155,6 +199,11 @@ def train(cfg: Config) -> None:
                 replay_buffer.add(
                     obs_vector, action, reward, next_obs_vector, terminal
                 )
+                obs = next_obs
+                episode_reward += float(reward)
+                episode_cost += float(cost)
+                episode_steps += 1
+                global_step += 1
 
                 ready_size = max(cfg.minimal_size, cfg.batch_size)
                 if replay_buffer.size() >= ready_size and cfg.train_every_step:
@@ -170,11 +219,17 @@ def train(cfg: Config) -> None:
                 if reward_terms:
                     logger.log(reward_terms, global_step)
 
-                obs = next_obs
-                episode_reward += float(reward)
-                episode_cost += float(cost)
-                episode_steps += 1
-                global_step += 1
+                if global_step - last_checkpoint_step >= cfg.checkpoint_interval:
+                    save_checkpoint(
+                        agent,
+                        cfg,
+                        checkpoint_dir,
+                        global_step,
+                        episode,
+                        env,
+                        replay_buffer,
+                    )
+                    last_checkpoint_step = global_step
 
             logger.log(
                 {
@@ -182,28 +237,25 @@ def train(cfg: Config) -> None:
                     "episode/cost": episode_cost,
                     "episode/length": float(episode_steps),
                     "episode/index": float(episode),
+                    "episode/truncated_by_budget": float(not done),
                 },
                 global_step,
             )
             log_action_metrics(logger, episode_actions, global_step)
-            if (
-                global_step - last_checkpoint_step >= cfg.checkpoint_interval
-                or episode + 1 >= cfg.max_episodes
-            ):
-                trainer_state = {
-                    "episode": episode,
-                    "carla_versions": carla_versions(env),
-                }
-                if cfg.checkpoint_replay_buffer:
-                    trainer_state["replay_buffer"] = replay_buffer.state_dict()
-                save_training_checkpoint(
-                    agent, cfg, checkpoint_dir, global_step, trainer_state
-                )
-                last_checkpoint_step = global_step
             print(
                 "[Episode {:03d}] Reward={:.2f} Steps={} gstep={}".format(
                     episode, episode_reward, episode_steps, global_step
                 )
+            )
+        if global_step > 0 and global_step != last_checkpoint_step:
+            save_checkpoint(
+                agent,
+                cfg,
+                checkpoint_dir,
+                global_step,
+                last_episode,
+                env,
+                replay_buffer,
             )
     finally:
         if env is not None:
@@ -226,6 +278,23 @@ def build_argparser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--town", default=None)
     parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--total-timesteps", type=int, default=None)
+    parser.add_argument("--checkpoint-interval", type=int, default=None)
+    parser.add_argument("--minimal-size", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--buffer-size", type=int, default=None)
+    parser.add_argument("--hidden-dim", type=int, default=None)
+    parser.add_argument(
+        "--vehicles", dest="number_of_vehicles", type=int, default=None
+    )
+    parser.add_argument(
+        "--walkers", dest="number_of_walkers", type=int, default=None
+    )
+    parser.add_argument(
+        "--view-mode", choices=["none", "top", "follow"], default=None
+    )
+    parser.add_argument("--traffic", choices=["on", "off"], default=None)
+    parser.add_argument("--max-time-episode", type=int, default=None)
     parser.add_argument(
         "--network", default=None, choices=["SAC", "Attention_SAC"]
     )
@@ -260,6 +329,12 @@ def build_argparser() -> argparse.ArgumentParser:
         default=Config.pretrained_model_path,
         help="Optional algorithm checkpoint to resume from",
     )
+    parser.add_argument(
+        "--checkpoint-replay-buffer",
+        action="store_true",
+        default=None,
+        help="Store replay data in checkpoints for exact online resume",
+    )
     return parser
 
 
@@ -277,6 +352,17 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         "algorithm",
         "town",
         "port",
+        "total_timesteps",
+        "checkpoint_interval",
+        "minimal_size",
+        "batch_size",
+        "buffer_size",
+        "hidden_dim",
+        "number_of_vehicles",
+        "number_of_walkers",
+        "view_mode",
+        "traffic",
+        "max_time_episode",
         "network",
         "action_mode",
         "max_episodes",
@@ -285,6 +371,7 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         "logger_backend",
         "run_name",
         "wandb_mode",
+        "checkpoint_replay_buffer",
     ):
         value = getattr(args, name)
         if value is not None:

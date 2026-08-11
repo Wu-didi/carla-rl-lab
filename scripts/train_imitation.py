@@ -99,6 +99,7 @@ def train_adversarial(
         episode_return = 0.0
         episode_cost = 0.0
         episode_length = 0
+        consecutive_step_failures = 0
 
         while global_step < cfg.total_timesteps:
             rollout_size = min(cfg.rollout_steps, cfg.total_timesteps - global_step)
@@ -107,8 +108,15 @@ def train_adversarial(
                 action, log_prob, value = agent.act_with_info(state)
                 try:
                     next_observation, reward, cost, done, info = env.step(action)
-                except Exception:
+                except Exception as exc:
                     traceback.print_exc()
+                    consecutive_step_failures += 1
+                    if consecutive_step_failures >= cfg.max_step_retries:
+                        raise RuntimeError(
+                            "CARLA step failed {} consecutive times".format(
+                                consecutive_step_failures
+                            )
+                        ) from exc
                     rollout.end_episode(next_value=agent.value(state), terminal=False)
                     last_done = True
                     episode_index += 1
@@ -120,6 +128,7 @@ def train_adversarial(
                     episode_cost = 0.0
                     episode_length = 0
                     continue
+                consecutive_step_failures = 0
                 next_state = encode_observation(
                     next_observation, cfg.state_dim, cfg.risk_field_sectors
                 )
@@ -219,6 +228,14 @@ def train(cfg: Config) -> None:
         raise ValueError("{} does not use the imitation runner".format(cfg.algorithm))
     if not cfg.expert_dataset_path:
         raise ValueError("--expert-dataset is required")
+    if cfg.checkpoint_interval <= 0:
+        raise ValueError("checkpoint_interval must be positive")
+    if cfg.algorithm == "bc" and cfg.imitation_updates <= 0:
+        raise ValueError("imitation_updates must be positive")
+    if cfg.algorithm != "bc" and cfg.total_timesteps <= 0:
+        raise ValueError("total_timesteps must be positive")
+    if cfg.max_step_retries <= 0:
+        raise ValueError("max_step_retries must be positive")
     set_seed(cfg.seed)
     dataset = OfflineDataset.load(
         cfg.expert_dataset_path,
@@ -262,13 +279,30 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--total-timesteps", type=int, default=None)
     parser.add_argument("--rollout-steps", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--hidden-dim", type=int, default=None)
     parser.add_argument("--checkpoint-interval", type=int, default=None)
     parser.add_argument("--town", default=None)
     parser.add_argument("--port", type=int, default=None)
+    parser.add_argument(
+        "--vehicles", dest="number_of_vehicles", type=int, default=None
+    )
+    parser.add_argument(
+        "--walkers", dest="number_of_walkers", type=int, default=None
+    )
+    parser.add_argument(
+        "--view-mode", choices=["none", "top", "follow"], default=None
+    )
+    parser.add_argument("--traffic", choices=["on", "off"], default=None)
+    parser.add_argument("--max-time-episode", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--reward", dest="reward_profile", choices=list(list_reward_profiles()), default=None)
     parser.add_argument("--logger", dest="logger_backend", choices=["tensorboard", "wandb", "both", "none"], default=None)
     parser.add_argument("--run-name", default=None)
+    parser.add_argument(
+        "--wandb-mode",
+        choices=["online", "offline", "disabled"],
+        default=None,
+    )
     parser.add_argument("--checkpoint", default="")
     return parser
 

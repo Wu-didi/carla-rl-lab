@@ -39,6 +39,7 @@ def policy_action_to_carla(
     if action_mode == LONGITUDINAL_2D:
         longitudinal, steer = unit
         throttle = max(float(longitudinal), 0.0)
+        steer = float(steer)
         brake = max(float(-longitudinal), 0.0)
     else:
         throttle = max(float(unit[0]), 0.0)

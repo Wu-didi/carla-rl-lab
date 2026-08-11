@@ -36,6 +36,14 @@ def project_root() -> str:
 def train(cfg: Config) -> None:
     if get_algorithm(cfg.algorithm).runner != "on_policy":
         raise ValueError("{} does not use the on_policy runner".format(cfg.algorithm))
+    if cfg.total_timesteps <= 0:
+        raise ValueError("total_timesteps must be positive")
+    if cfg.rollout_steps <= 0:
+        raise ValueError("rollout_steps must be positive")
+    if cfg.checkpoint_interval <= 0:
+        raise ValueError("checkpoint_interval must be positive")
+    if cfg.max_step_retries <= 0:
+        raise ValueError("max_step_retries must be positive")
     set_seed(cfg.seed)
     run_name = cfg.run_name or "{}_seed{}".format(cfg.algorithm, cfg.seed)
     log_dir = os.path.join(project_root(), "artifacts", "runs", run_name)
@@ -65,6 +73,7 @@ def train(cfg: Config) -> None:
         episode_cost = 0.0
         episode_length = 0
         last_done = False
+        consecutive_step_failures = 0
 
         while global_step < cfg.total_timesteps:
             rollout_size = min(cfg.rollout_steps, cfg.total_timesteps - global_step)
@@ -73,8 +82,15 @@ def train(cfg: Config) -> None:
                 action, log_prob, value = agent.act_with_info(state)
                 try:
                     next_observation, reward, cost, done, info = env.step(action)
-                except Exception:
+                except Exception as exc:
                     traceback.print_exc()
+                    consecutive_step_failures += 1
+                    if consecutive_step_failures >= cfg.max_step_retries:
+                        raise RuntimeError(
+                            "CARLA step failed {} consecutive times".format(
+                                consecutive_step_failures
+                            )
+                        ) from exc
                     rollout.end_episode(next_value=agent.value(state), terminal=False)
                     last_done = True
                     episode_index += 1
@@ -86,6 +102,7 @@ def train(cfg: Config) -> None:
                     episode_cost = 0.0
                     episode_length = 0
                     continue
+                consecutive_step_failures = 0
                 next_state = encode_observation(
                     next_observation, cfg.state_dim, cfg.risk_field_sectors
                 )
@@ -181,18 +198,36 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--total-timesteps", type=int, default=None)
     parser.add_argument("--rollout-steps", type=int, default=None)
+    parser.add_argument("--checkpoint-interval", type=int, default=None)
+    parser.add_argument("--hidden-dim", type=int, default=None)
+    parser.add_argument("--ppo-epochs", type=int, default=None)
+    parser.add_argument("--ppo-minibatch-size", type=int, default=None)
+    parser.add_argument(
+        "--vehicles", dest="number_of_vehicles", type=int, default=None
+    )
+    parser.add_argument(
+        "--walkers", dest="number_of_walkers", type=int, default=None
+    )
+    parser.add_argument(
+        "--view-mode", choices=["none", "top", "follow"], default=None
+    )
+    parser.add_argument("--traffic", choices=["on", "off"], default=None)
+    parser.add_argument("--max-time-episode", type=int, default=None)
     parser.add_argument("--action-mode", choices=ACTION_MODES, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--reward", dest="reward_profile", choices=list(list_reward_profiles()), default=None)
     parser.add_argument("--logger", dest="logger_backend", choices=["tensorboard", "wandb", "both", "none"], default=None)
     parser.add_argument("--run-name", default=None)
+    parser.add_argument(
+        "--wandb-mode",
+        choices=["online", "offline", "disabled"],
+        default=None,
+    )
     parser.add_argument("--checkpoint", default="")
     return parser
 
 
-def main() -> None:
-    args = build_argparser().parse_args()
-    cfg = Config()
+def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
     cfg.algorithm = "ppo"
     if args.checkpoint:
         apply_checkpoint_config(cfg, args.checkpoint)
@@ -206,6 +241,12 @@ def main() -> None:
         cfg.action_dim = 2 if cfg.action_mode == "longitudinal_2d" else 3
     cfg.pretrained_model_path = args.checkpoint
     cfg.use_pretrained_model = bool(args.checkpoint)
+    return cfg
+
+
+def main() -> None:
+    args = build_argparser().parse_args()
+    cfg = apply_overrides(Config(), args)
     print("[Config]", asdict(cfg))
     train(cfg)
 

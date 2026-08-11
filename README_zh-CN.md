@@ -265,6 +265,25 @@ python scripts/train_imitation.py --algo gail --expert-dataset /path/to/expert.n
 python scripts/train_imitation.py --algo airl --expert-dataset /path/to/expert.npz
 ```
 
+要端到端验证四条代表性科研链路，先在终端 A 启动 CARLA，再在终端 B 运行有限预算的
+集成冒烟：
+
+```bash
+# 终端 A
+cd "$CARLA_ROOT"
+./CarlaUE4.sh -RenderOffScreen -quality_level=Low-prefernvidia
+
+# 终端 B，在仓库根目录执行
+conda activate carla37
+CARLA_PORT=2000 scripts/run_research_smoke.sh
+```
+
+该脚本先采集一份小型专家数据集，再依次运行 SAC、PPO、BC 和 TD3+BC，并将
+TensorBoard 日志与 checkpoint 写入 `artifacts/research-smoke/`。可通过
+`SMOKE_TRANSITIONS`、`SMOKE_TIMESTEPS` 和 `SMOKE_UPDATES` 调整有限预算。它只验证
+集成正确性，不代表算法性能；固定 baseline 协议见
+[`docs/experiments.md`](docs/experiments.md)。
+
 实验输出位于 `artifacts/runs/<run-name>/`，默认不会提交到 Git。每次运行都会写入
 `run_config.json`。checkpoint 目录保存有限数量的不可变步数 checkpoint、
 `checkpoint_manifest.json` 和 `*_ckpt_last.pt` 别名。新 checkpoint 内嵌完整配置、
@@ -407,6 +426,7 @@ scripts/
   train_imitation.py # 纯专家或专家/在线混合主循环
   collect_dataset.py # 带版本的 random/autopilot 数据采集
   smoke_carla.py     # 真实 server connection/reset/step 冒烟
+  run_research_smoke.sh # SAC/PPO/BC/TD3+BC 集成冒烟
   evaluate.py        # 轻量确定性评测入口
   evaluate_paper.py  # 官方 Leaderboard/Bench2Drive 预检与启动入口
   launch_carla.sh    # 已记录的 CARLA 启动命令
@@ -445,6 +465,8 @@ TensorBoard/W&B 和第一个固定 benchmark。后续工作按照实验可复现
 
 - [ ] 每个已实现算法至少使用 3 个训练种子在 CARLA 中完整训练，并使用
   `lane_following_v0` 的全部 5 个种子评测 checkpoint。
+- [x] 在启动高成本 baseline 前，增加 SAC、PPO、BC、TD3+BC 的有限预算 CARLA
+  集成冒烟。
 - [ ] 每次实验记录 Git commit、完整配置、随机种子、环境版本、reward profile、
   训练时间和硬件信息。
 - [ ] 最终与最佳 checkpoint 通过 GitHub Releases 发布，不把大型二进制文件直接

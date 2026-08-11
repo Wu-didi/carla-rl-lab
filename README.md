@@ -269,6 +269,25 @@ python scripts/train_imitation.py --algo gail --expert-dataset /path/to/expert.n
 python scripts/train_imitation.py --algo airl --expert-dataset /path/to/expert.npz
 ```
 
+To verify the four representative research paths end to end, start CARLA in
+Terminal A and run the bounded integration smoke in Terminal B:
+
+```bash
+# Terminal A
+cd "$CARLA_ROOT"
+./CarlaUE4.sh -RenderOffScreen -quality_level=Low-prefernvidia
+
+# Terminal B, from the repository root
+conda activate carla37
+CARLA_PORT=2000 scripts/run_research_smoke.sh
+```
+
+This collects a small expert dataset, then runs SAC, PPO, BC, and TD3+BC. It
+writes TensorBoard logs and checkpoints under `artifacts/research-smoke/`.
+Override the bounded workload with `SMOKE_TRANSITIONS`, `SMOKE_TIMESTEPS`, and
+`SMOKE_UPDATES`. This is an integration check, not a performance baseline; the
+fixed baseline protocol is defined in [`docs/experiments.md`](docs/experiments.md).
+
 Runs are stored under `artifacts/runs/<run-name>/` and are ignored by Git.
 Every run writes `run_config.json`. Checkpoint directories contain immutable
 step checkpoints, a bounded `checkpoint_manifest.json`, and a `*_ckpt_last.pt`
@@ -416,6 +435,7 @@ scripts/
   train_imitation.py # Expert-only or expert/online mixed loop
   collect_dataset.py # Versioned random/autopilot dataset collection
   smoke_carla.py     # Real server connection/reset/step smoke
+  run_research_smoke.sh # SAC/PPO/BC/TD3+BC integration smoke
   evaluate.py        # Lightweight deterministic benchmark entry point
   evaluate_paper.py  # Official Leaderboard/Bench2Drive preflight + launcher
   launch_carla.sh    # Remembered CARLA launch commands
@@ -457,6 +477,8 @@ length of the algorithm list.
 
 - [ ] Train every implemented algorithm in CARLA with at least 3 training seeds,
   then evaluate each checkpoint on all 5 `lane_following_v0` seeds.
+- [x] Add a bounded CARLA integration smoke for SAC, PPO, BC, and TD3+BC before
+  launching expensive baseline runs.
 - [ ] Record the Git commit, full config, seeds, environment version, reward
   profile, wall-clock time, and hardware for every run.
 - [ ] Publish final and best checkpoints through GitHub Releases instead of

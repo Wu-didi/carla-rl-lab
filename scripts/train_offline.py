@@ -29,6 +29,10 @@ def train(cfg: Config) -> None:
         raise ValueError("{} does not use the offline runner".format(cfg.algorithm))
     if not cfg.dataset_path:
         raise ValueError("--dataset is required")
+    if cfg.offline_updates <= 0:
+        raise ValueError("offline_updates must be positive")
+    if cfg.checkpoint_interval <= 0:
+        raise ValueError("checkpoint_interval must be positive")
     set_seed(cfg.seed)
     dataset = OfflineDataset.load(cfg.dataset_path, seed=cfg.seed)
     if not cfg.use_pretrained_model:
@@ -114,10 +118,16 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset", dest="dataset_path", required=True)
     parser.add_argument("--updates", dest="offline_updates", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--hidden-dim", type=int, default=None)
     parser.add_argument("--checkpoint-interval", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--logger", dest="logger_backend", choices=["tensorboard", "wandb", "both", "none"], default=None)
     parser.add_argument("--run-name", default=None)
+    parser.add_argument(
+        "--wandb-mode",
+        choices=["online", "offline", "disabled"],
+        default=None,
+    )
     parser.add_argument("--checkpoint", default="")
     return parser
 

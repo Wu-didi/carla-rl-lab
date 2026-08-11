@@ -21,10 +21,14 @@ class ControlAndRolloutTest(unittest.TestCase):
         np.testing.assert_allclose(encoded, [0.0, 0.25, 0.75])
 
     def test_longitudinal_2d_action_separates_throttle_and_brake(self):
+        control = policy_action_to_carla(
+            np.array([0.6, -0.2], dtype=np.float32), "longitudinal_2d"
+        )
         np.testing.assert_allclose(
-            policy_action_to_carla(np.array([0.6, -0.2]), "longitudinal_2d"),
+            control,
             (0.6, -0.2, 0.0),
         )
+        self.assertTrue(all(type(value) is float for value in control))
         np.testing.assert_allclose(
             policy_action_to_carla(np.array([-0.4, 0.2]), "longitudinal_2d"),
             (0.0, 0.2, 0.4),

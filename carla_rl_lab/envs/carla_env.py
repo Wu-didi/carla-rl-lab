@@ -5,6 +5,7 @@ from __future__ import division
 import numpy as np
 import random
 import time
+import warnings
 import gym
 from gym import spaces
 from gym.utils import seeding
@@ -15,6 +16,8 @@ except ImportError:
     DynamicPF = None
 import os
 import cv2, io, requests
+
+from carla_rl_lab.envs.control import policy_action_to_carla, validate_action_spec
 
 
 class CarlaEnv(gym.Env):
@@ -63,6 +66,57 @@ class CarlaEnv(gym.Env):
         self.reward_fn = self.params.get('reward_fn')
         self.last_reward_terms = {}
         self.termination_reason = None
+        self.action_dim = int(params.get('action_dim', 3))
+        self.action_bound = float(params.get('action_bound', 1.0))
+        self.action_mode = params.get('action_mode', 'signed_3d')
+        encoded_dim = (
+            9
+            + 2
+            + max(1, int(params.get('risk_field_sectors', 12)))
+            + 240
+            + 3 * self.max_waypoints
+        )
+        self.state_dim = int(params.get('state_dim', encoded_dim))
+        if self.state_dim != encoded_dim:
+            raise ValueError(
+                "state_dim={} does not match vector observation schema ({})".format(
+                    self.state_dim, encoded_dim
+                )
+            )
+        self.max_walker_spawn_attempts = max(
+            self.number_of_walkers,
+            int(params.get('max_walker_spawn_attempts', 200)),
+        )
+        validate_action_spec(self.action_mode, self.action_dim)
+        self.action_space = spaces.Box(
+            low=-self.action_bound,
+            high=self.action_bound,
+            shape=(self.action_dim,),
+            dtype=np.float32,
+        )
+        self.observation_space = spaces.Dict({
+            'ego_state': spaces.Box(-np.inf, np.inf, shape=(9,), dtype=np.float32),
+            'lane_info': spaces.Box(0.0, np.inf, shape=(2,), dtype=np.float32),
+            'risk_field': spaces.Box(
+                0.0, 1.0, shape=(max(1, int(params.get('risk_field_sectors', 12))),), dtype=np.float32
+            ),
+            'lidar': spaces.Box(0.0, 1.0, shape=(240,), dtype=np.float32),
+            'nearby_vehicles': spaces.Box(
+                -np.inf,
+                np.inf,
+                shape=(6 * self.max_nearby_vehicles,),
+                dtype=np.float32,
+            ),
+            'waypoints': spaces.Box(
+                -np.inf,
+                np.inf,
+                shape=(3 * self.max_waypoints,),
+                dtype=np.float32,
+            ),
+        })
+        self.policy_observation_space = spaces.Box(
+            -np.inf, np.inf, shape=(self.state_dim,), dtype=np.float32
+        )
 
         self.rgb_camera = None
         self.segmentation_camera = None
@@ -80,17 +134,10 @@ class CarlaEnv(gym.Env):
 
         # Get all predefined vehicle spawn points from the map
         self.vehicle_spawn_points = list(self.world.get_map().get_spawn_points())
-        # Prepare a list to hold spawn points for pedestrians (walkers)
+        if not self.vehicle_spawn_points:
+            raise RuntimeError("CARLA map has no vehicle spawn points")
+        # Rebuilt on every reset after the episode seed has been applied.
         self.walker_spawn_points = []
-        # Randomly generate spawn points for the specified number of pedestrians
-        for i in range(self.number_of_walkers):
-            spawn_point = carla.Transform()  # Create an empty transform object
-            # Try to get a random navigable location in the environment
-            loc = self.world.get_random_location_from_navigation()
-            # If a valid location is found, use it as a spawn point for a pedestrian
-            if loc is not None:
-                spawn_point.location = loc
-                self.walker_spawn_points.append(spawn_point)
 
 
         self.ego_bp = self._create_vehicle_bluepprint(params['ego_vehicle_filter'], color='255,0,0')
@@ -138,10 +185,13 @@ class CarlaEnv(gym.Env):
         self.np_random, resolved_seed = seeding.np_random(seed)
         resolved_seed = int(resolved_seed)
         device_seed = resolved_seed % (2**32)
-        random.seed(device_seed)
-        np.random.seed(device_seed)
+        self._python_random = random.Random(device_seed)
+        if hasattr(self, 'action_space'):
+            self.action_space.seed(device_seed)
         if hasattr(self, 'traffic_manager'):
             self.traffic_manager.set_random_device_seed(device_seed)
+        if hasattr(self, 'world') and hasattr(self.world, 'set_pedestrians_seed'):
+            self.world.set_pedestrians_seed(device_seed)
         self._seed = resolved_seed
         return [resolved_seed]
 
@@ -361,7 +411,9 @@ class CarlaEnv(gym.Env):
         self.segmentation_step += 1
 
 
-    def reset(self):
+    def reset(self, seed=None):
+        if seed is not None:
+            self.seed(seed)
         self.termination_reason = None
         self.last_reward_terms = {}
         # Stop and destroy the collision sensor if it exists
@@ -408,15 +460,19 @@ class CarlaEnv(gym.Env):
             'controller.ai.walker',
             'walker.*'
         ])  # Remove all specified actors from the world
+        self._set_synchronous_mode(True)
+        self.last_speed = {}
+        self.lidar_data = None
 
         # Spawn surrounding vehicles
-        random.shuffle(self.vehicle_spawn_points)
+        vehicle_spawn_points = list(self.vehicle_spawn_points)
+        self._python_random.shuffle(vehicle_spawn_points)
         count = self.number_of_vehicles
         self.spawned_vehicles = []
         self.used_spawn_points = []
 
         if count > 0:
-            for spawn_point in self.vehicle_spawn_points:
+            for spawn_point in vehicle_spawn_points:
                 vehicle = self._try_spawn_random_vehicle_at(spawn_point, number_of_wheels=[4])
                 if vehicle:
                     self.spawned_vehicles.append(vehicle)  # Record the spawned vehicle
@@ -427,20 +483,17 @@ class CarlaEnv(gym.Env):
         # print(f"Surrounding vehicles number is {len(self.spawned_vehicles)}")
 
         # Spawn pedestrians
-        random.shuffle(self.walker_spawn_points)
-        count = self.number_of_walkers
-
-        if count > 0:
-            for spawn_point in self.walker_spawn_points:
-                if self._try_spawn_random_walker_at(spawn_point):
-                    count -= 1
-                if count <= 0:
-                    break
-
-        # Try random spawn points until all pedestrians are spawned
-        while count > 0:
-            if self._try_spawn_random_walker_at(random.choice(self.walker_spawn_points)):
-                count -= 1
+        self.walker_spawn_points = []
+        self.spawned_walker_count = self._spawn_walkers(self.number_of_walkers)
+        if self.spawned_walker_count < self.number_of_walkers:
+            warnings.warn(
+                "spawned {}/{} requested walkers after {} attempts".format(
+                    self.spawned_walker_count,
+                    self.number_of_walkers,
+                    self.max_walker_spawn_attempts,
+                ),
+                RuntimeWarning,
+            )
 
         # Get actors' polygon list
         # Calculate and collect the bounding polygons (e.g., four corners) of surrounding vehicles and pedestrians
@@ -455,18 +508,22 @@ class CarlaEnv(gym.Env):
         # Spawn the ego vehicle
         ego_spawn_times = 0
         while True:
-            if ego_spawn_times > self.max_ego_spawn_times:
-                self.reset()  # If failed too many times, reset the environment
+            if ego_spawn_times >= self.max_ego_spawn_times:
+                raise RuntimeError(
+                    "failed to spawn ego vehicle after {} attempts".format(
+                        self.max_ego_spawn_times
+                    )
+                )
 
             # Select a spawn point for the ego vehicle by excluding locations used by nearby vehicles
             available_spawn_points = [
-                sp for sp in self.vehicle_spawn_points if sp not in self.used_spawn_points
+                sp for sp in vehicle_spawn_points if sp not in self.used_spawn_points
             ]
 
             if len(available_spawn_points) > 0:
-                transform = random.choice(available_spawn_points)  # Choose a spawn point not used by nearby vehicles
+                transform = self._python_random.choice(available_spawn_points)
             else:
-                transform = random.choice(self.vehicle_spawn_points)  # Fallback: use any spawn point
+                transform = self._python_random.choice(vehicle_spawn_points)
 
             # Try to spawn the ego vehicle at the selected location
             if self._try_spawn_ego_vehicle_at(transform):
@@ -586,9 +643,7 @@ class CarlaEnv(gym.Env):
 
         # Enable autopilot for all surrounding vehicles
         for vehicle in self.spawned_vehicles:
-            vehicle.set_autopilot()
-
-        self._set_synchronous_mode(True)  # Switch to synchronous mode for simulation
+            vehicle.set_autopilot(True, self.traffic_manager.get_port())
         self.world.tick()  # Advance the simulation by one tick
 
         self.lane_yaw_list = []
@@ -602,11 +657,14 @@ class CarlaEnv(gym.Env):
 
         # 2. 读取 CARLA 自动驾驶系统此刻真实下发的控制量
         control = self.ego.get_control()
-        action = np.array([
+        from carla_rl_lab.envs.control import carla_action_to_policy
+        action = carla_action_to_policy(
             control.throttle,
             control.steer,
-            control.brake
-        ], dtype=np.float32)
+            control.brake,
+            self.action_mode,
+            self.action_bound,
+        )
 
         # 3. 其余逻辑保持不变
         if self.view_mode == 'top':
@@ -627,7 +685,7 @@ class CarlaEnv(gym.Env):
         self.total_step += 1
 
         obs = self._get_obs()
-        done = self._terminal()
+        done = self._terminal(obs)
         reward = self._get_reward(obs, done)
         cost = self._get_cost(obs)
         info = {
@@ -635,15 +693,17 @@ class CarlaEnv(gym.Env):
             'is_off_road': self._is_off_road,
             'termination_reason': self.termination_reason,
             'reward_terms': dict(self.last_reward_terms),
+            'spawned_vehicles': len(self.spawned_vehicles),
+            'spawned_walkers': self.spawned_walker_count,
         }
 
         return obs, reward, cost, done, info, action   # 多返回一个 action
 
     #mormal train step
     def step(self, action):
-        throttle = float(np.clip(action[0], 0.0, 1.0))
-        steer    = float(np.clip(action[1], -1.0, 1.0))
-        brake    = float(np.clip(action[2], 0.0, 1.0))
+        throttle, steer, brake = policy_action_to_carla(
+            action, self.action_mode, self.action_bound
+        )
 
         # Apply control
         control = carla.VehicleControl(throttle=throttle, steer=steer, brake=brake)
@@ -673,7 +733,7 @@ class CarlaEnv(gym.Env):
         self.total_step += 1
 
         obs = self._get_obs()
-        done = self._terminal()
+        done = self._terminal(obs)
         reward = self._get_reward(obs, done)
         cost = self._get_cost(obs)
 
@@ -683,6 +743,8 @@ class CarlaEnv(gym.Env):
           'is_off_road': self._is_off_road,
           'termination_reason': self.termination_reason,
           'reward_terms': dict(self.last_reward_terms),
+          'spawned_vehicles': len(self.spawned_vehicles),
+          'spawned_walkers': self.spawned_walker_count,
         }
         return (obs, reward, cost, done, info)
 
@@ -708,12 +770,14 @@ class CarlaEnv(gym.Env):
             blueprint_library += [x for x in blueprints if int(x.get_attribute('number_of_wheels')) == nw]
 
         # Randomly select one blueprint from the filtered list
-        bp = random.choice(blueprint_library)
+        if not blueprint_library:
+            raise RuntimeError("no CARLA vehicle blueprint matches '{}'".format(actor_filter))
+        bp = self._python_random.choice(blueprint_library)
 
         # Set the vehicle color
         if bp.has_attribute('color'):
             if not color:
-                color = random.choice(bp.get_attribute('color').recommended_values)
+                color = self._python_random.choice(bp.get_attribute('color').recommended_values)
             bp.set_attribute('color', color)
 
         return bp
@@ -727,6 +791,7 @@ class CarlaEnv(gym.Env):
                 False to disable and run in asynchronous mode (default is True).
         """
         self.settings.synchronous_mode = synchronous  # Set the synchronous mode
+        self.traffic_manager.set_synchronous_mode(bool(synchronous))
         self.world.apply_settings(self.settings)  # Apply the updated settings to the world
 
     def _try_spawn_random_vehicle_at(self, transform, number_of_wheels=[4]):
@@ -746,7 +811,7 @@ class CarlaEnv(gym.Env):
             # Randomly choose any vehicle blueprint
             blueprint = self._create_vehicle_bluepprint('vehicle.*', number_of_wheels=number_of_wheels)
             if blueprint.has_attribute('color'):
-                color = random.choice(blueprint.get_attribute('color').recommended_values)
+                color = self._python_random.choice(blueprint.get_attribute('color').recommended_values)
                 blueprint.set_attribute('color', color)
         else:
             # Fixed: Tesla Model 3 with blue color
@@ -769,7 +834,10 @@ class CarlaEnv(gym.Env):
             Bool: True if spawn is successful, False otherwise.
         """
         # Randomly select a walker blueprint
-        walker_bp = random.choice(self.world.get_blueprint_library().filter('walker.*'))
+        walker_blueprints = list(self.world.get_blueprint_library().filter('walker.*'))
+        if not walker_blueprints:
+            return False
+        walker_bp = self._python_random.choice(walker_blueprints)
 
         # Make the walker vulnerable (can be affected by collisions)
         if walker_bp.has_attribute('is_invincible'):
@@ -781,20 +849,50 @@ class CarlaEnv(gym.Env):
         if walker_actor is not None:
             # Spawn a controller for the walker
             walker_controller_bp = self.world.get_blueprint_library().find('controller.ai.walker')
-            walker_controller_actor = self.world.spawn_actor(walker_controller_bp, carla.Transform(), walker_actor)
+            try:
+                walker_controller_actor = self.world.spawn_actor(
+                    walker_controller_bp, carla.Transform(), walker_actor
+                )
+            except Exception:
+                walker_actor.destroy()
+                return False
 
             # Start the controller to control the walker
             walker_controller_actor.start()
 
             # Move the walker to a random location
-            walker_controller_actor.go_to_location(self.world.get_random_location_from_navigation())
+            destination = self.world.get_random_location_from_navigation()
+            if destination is None:
+                walker_controller_actor.stop()
+                walker_controller_actor.destroy()
+                walker_actor.destroy()
+                return False
+            walker_controller_actor.go_to_location(destination)
 
             # Set a random walking speed between 1 m/s and 2 m/s (default is 1.4 m/s)
-            walker_controller_actor.set_max_speed(1 + random.random())
+            walker_controller_actor.set_max_speed(1 + self._python_random.random())
 
             return True  # Spawn and initialization successful
 
         return False  # Failed to spawn
+
+    def _spawn_walkers(self, requested):
+        spawned = 0
+        attempts = 0
+        while spawned < requested and attempts < self.max_walker_spawn_attempts:
+            attempts += 1
+            location = self.world.get_random_location_from_navigation()
+            if location is None:
+                continue
+            transform = carla.Transform(location)
+            self.walker_spawn_points.append(transform)
+            if self._try_spawn_random_walker_at(transform):
+                spawned += 1
+        return spawned
+
+    def set_ego_autopilot(self, enabled=True):
+        """Enable CARLA Traffic Manager control for expert collection."""
+        self.ego.set_autopilot(bool(enabled), self.traffic_manager.get_port())
 
     def _try_spawn_ego_vehicle_at(self, transform):
         """Try to spawn the ego vehicle at a specific transform.
@@ -919,7 +1017,8 @@ class CarlaEnv(gym.Env):
         ego_yaw = np.deg2rad(ego_transform.rotation.yaw)
 
         # Traverse all point clouds
-        for detection in self.lidar_data:
+        lidar_data = self.lidar_data if self.lidar_data is not None else ()
+        for detection in lidar_data:
             x = detection.point.x
             y = detection.point.y
 
@@ -992,7 +1091,7 @@ class CarlaEnv(gym.Env):
         vehicle_list = self.world.get_actors().filter('vehicle.*')
 
         vehicle_data = []
-        current_time = time.time()
+        current_time = self.total_step * self.dt
         for vehicle in vehicle_list:
             if vehicle.id == self.ego.id:
                 continue  # Skip the ego vehicle itself
@@ -1336,7 +1435,7 @@ class CarlaEnv(gym.Env):
 
         return cost
 
-    def _terminal(self):
+    def _terminal(self, obs=None):
         ego_transform = self.ego.get_transform()
         ego_x = ego_transform.location.x
         ego_y = ego_transform.location.y
@@ -1385,7 +1484,9 @@ class CarlaEnv(gym.Env):
                 return True
 
         # 6. Deviation too far from lane center
-        lane_width, lateral_offset = self._get_obs()['lane_info']
+        if obs is None:
+            obs = self._get_obs()
+        lane_width, lateral_offset = obs['lane_info']
         if not waypoint.is_intersection:
             if lateral_offset > lane_width / 2 + 1.0:
                 self._is_off_road = True

@@ -221,6 +221,7 @@ class CoreSmokeTest(unittest.TestCase):
                 batch["expert_states"] = expert_batch["states"]
                 batch["expert_actions"] = expert_batch["actions"]
                 batch["expert_next_states"] = expert_batch["next_states"]
+                batch["expert_dones"] = expert_batch["dones"]
                 logs = agent.update(batch)
                 self.assertTrue(all(np.isfinite(float(value)) for value in logs.values()))
                 self._assert_checkpoint_roundtrip(name, agent, cfg)
@@ -287,6 +288,7 @@ class CoreSmokeTest(unittest.TestCase):
             logger.log({"train/loss": 1.0}, step=0)
             logger.close()
             self.assertTrue(any(name.startswith("events.out.tfevents") for name in os.listdir(log_dir)))
+            self.assertTrue(os.path.isfile(os.path.join(log_dir, "run_config.json")))
 
     def test_benchmark_evaluator(self):
         self.assertEqual(

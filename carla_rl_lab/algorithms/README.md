@@ -26,13 +26,17 @@ training loop. The v1 trainer is an `off_policy` runner.
 | TD3 | off-policy | implemented | Compact baseline with twin critics, delayed actor update, target policy smoothing. |
 | DDPG | off-policy | implemented | Compact deterministic actor/critic baseline. |
 | BC / GAIL / AIRL | imitation | implemented | Expert-only BC and PPO-based adversarial mixed runner. |
-| CQL / IQL / TD3+BC | offline RL | implemented | Validated `.npz` dataset API and fixed-dataset runner. |
+| CQL(H) / IQL / TD3+BC | offline RL | implemented | Versioned `.npz` dataset API and fixed-dataset runner. |
 
 ## Dataset Format
 
-Offline RL and AIRL consume `.npz` files with equally sized `states`,
-`actions`, `rewards`, `next_states`, and `dones` arrays. BC and GAIL accept a
-smaller expert file containing only `states` and `actions`.
+Use `scripts/collect_dataset.py` to create datasets from Traffic Manager or a
+random policy. Schema v2 stores equally sized `states`, `actions`, `rewards`,
+`next_states`, `terminals`, `timeouts`, `episode_ids`, and `costs` arrays plus
+JSON metadata. Training exposes `dones=terminals`, allowing value targets to
+bootstrap across time-limit truncations. BC and GAIL accept `states/actions`;
+AIRL requires complete transitions. Legacy five-field files remain readable,
+but cannot recover whether an old `done` was a terminal or timeout.
 
 ## Adding an Algorithm
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import collections
 import random
-from typing import Any, Deque, Dict, Tuple
+from typing import Any, Deque, Dict, Mapping, Tuple
 
 import numpy as np
 
@@ -39,3 +39,21 @@ class ReplayBuffer:
 
     def __len__(self) -> int:
         return len(self.buffer)
+
+    def state_dict(self) -> Dict[str, Any]:
+        return {
+            "capacity": self.buffer.maxlen,
+            "transitions": list(self.buffer),
+        }
+
+    def load_state_dict(self, state: Mapping[str, Any]) -> None:
+        saved_capacity = int(state.get("capacity", self.buffer.maxlen))
+        if saved_capacity != self.buffer.maxlen:
+            raise ValueError(
+                "replay capacity mismatch: checkpoint={}, config={}".format(
+                    saved_capacity, self.buffer.maxlen
+                )
+            )
+        self.buffer.clear()
+        for transition in state.get("transitions", []):
+            self.buffer.append(transition)

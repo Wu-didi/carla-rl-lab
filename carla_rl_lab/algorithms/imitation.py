@@ -13,6 +13,7 @@ from carla_rl_lab.algorithms.common import DeterministicActor, mlp
 from carla_rl_lab.algorithms.on_policy import PpoAgent
 from carla_rl_lab.algorithms.registry import AlgorithmSpec, register_algorithm
 from carla_rl_lab.buffers import generalized_advantage_estimate
+from carla_rl_lab.utils.checkpoint import torch_load
 
 
 class BcAgent(BaseAgent):
@@ -72,7 +73,7 @@ class BcAgent(BaseAgent):
         )
 
     def load(self, checkpoint_path: str) -> None:
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        checkpoint = torch_load(checkpoint_path, map_location=self.device)
         self.actor.load_state_dict(checkpoint["actor"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         self.update_step = int(checkpoint.get("update_step", 0))
@@ -108,21 +109,23 @@ class AirlDiscriminator(nn.Module):
         states: torch.Tensor,
         actions: torch.Tensor,
         next_states: torch.Tensor,
+        dones: torch.Tensor,
     ) -> torch.Tensor:
         reward = self.reward(torch.cat([states, actions], dim=-1)).squeeze(-1)
         potential = self.potential(states).squeeze(-1)
         next_potential = self.potential(next_states).squeeze(-1)
-        return reward + self.gamma * next_potential - potential
+        return reward + self.gamma * (1.0 - dones) * next_potential - potential
 
 
-class AdversarialImitationAgent(PpoAgent):
-    """PPO policy plus an adversarial expert/policy discriminator."""
+class AdversarialImitationAgent(BaseAgent):
+    """Adversarial discriminator composed with a PPO policy."""
 
-    algorithm_name = "gail"
-    airl = False
-
-    def __init__(self, cfg: Any) -> None:
-        super().__init__(cfg)
+    def __init__(self, cfg: Any, algorithm_name: str, airl: bool) -> None:
+        self.cfg = cfg
+        self.algorithm_name = algorithm_name
+        self.airl = bool(airl)
+        self.policy = PpoAgent(cfg)
+        self.device = self.policy.device
         if self.airl:
             self.discriminator = AirlDiscriminator(
                 cfg.state_dim, cfg.hidden_dim, cfg.action_dim, cfg.gamma
@@ -141,18 +144,36 @@ class AdversarialImitationAgent(PpoAgent):
         self.gamma = float(cfg.gamma)
         self.gae_lambda = float(getattr(cfg, "gae_lambda", 0.95))
 
+    def act(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
+        return self.policy.act(obs, deterministic)
+
+    def act_with_info(self, obs: np.ndarray) -> Tuple[np.ndarray, float, float]:
+        return self.policy.act_with_info(obs)
+
+    def value(self, obs: np.ndarray) -> float:
+        return self.policy.value(obs)
+
+    def action_log_probs(self, states: Any, actions: Any) -> torch.Tensor:
+        return self.policy.action_log_probs(states, actions)
+
     def _logits(
         self,
         states: torch.Tensor,
         actions: torch.Tensor,
         next_states: Optional[torch.Tensor],
         policy_log_probs: Optional[torch.Tensor],
+        dones: Optional[torch.Tensor],
     ) -> torch.Tensor:
         if not self.airl:
             return self.discriminator(states, actions)
-        if next_states is None or policy_log_probs is None:
-            raise ValueError("AIRL requires next_states and policy log probabilities")
-        return self.discriminator(states, actions, next_states) - policy_log_probs
+        if next_states is None or policy_log_probs is None or dones is None:
+            raise ValueError(
+                "AIRL requires next_states, dones, and policy log probabilities"
+            )
+        return (
+            self.discriminator(states, actions, next_states, dones)
+            - policy_log_probs
+        )
 
     def _as_tensor(self, value: Any) -> torch.Tensor:
         return torch.as_tensor(value, dtype=torch.float32, device=self.device)
@@ -168,7 +189,7 @@ class AdversarialImitationAgent(PpoAgent):
         expert_required = ("expert_states", "expert_actions")
         if self.airl:
             policy_required += ("next_states",)
-            expert_required += ("expert_next_states",)
+            expert_required += ("expert_next_states", "expert_dones")
         missing = [
             name
             for name in policy_required + expert_required
@@ -184,6 +205,7 @@ class AdversarialImitationAgent(PpoAgent):
         states = self._as_tensor(batch["states"])
         actions = self._as_tensor(batch["actions"])
         policy_log_probs = self._as_tensor(batch["old_log_probs"]).reshape(-1)
+        policy_dones = self._as_tensor(batch["dones"]).reshape(-1)
         next_states = (
             self._as_tensor(batch["next_states"]) if self.airl else None
         )
@@ -191,6 +213,11 @@ class AdversarialImitationAgent(PpoAgent):
         expert_actions = self._as_tensor(batch["expert_actions"])
         expert_next_states = (
             self._as_tensor(batch["expert_next_states"]) if self.airl else None
+        )
+        expert_dones = (
+            self._as_tensor(batch["expert_dones"]).reshape(-1)
+            if self.airl
+            else None
         )
 
         discriminator_loss_value = 0.0
@@ -206,12 +233,14 @@ class AdversarialImitationAgent(PpoAgent):
                 expert_actions,
                 expert_next_states,
                 expert_log_probs,
+                expert_dones,
             )
             policy_logits = self._logits(
                 states,
                 actions,
                 next_states,
                 policy_log_probs,
+                policy_dones,
             )
             discriminator_loss = F.binary_cross_entropy_with_logits(
                 expert_logits, torch.ones_like(expert_logits)
@@ -229,7 +258,7 @@ class AdversarialImitationAgent(PpoAgent):
         with torch.no_grad():
             current_log_probs = self.action_log_probs(states, actions).reshape(-1)
             logits = self._logits(
-                states, actions, next_states, current_log_probs
+                states, actions, next_states, current_log_probs, policy_dones
             )
             shaped_rewards = logits if self.airl else F.softplus(logits)
 
@@ -240,12 +269,18 @@ class AdversarialImitationAgent(PpoAgent):
             float(batch.get("last_value", 0.0)),
             self.gamma,
             self.gae_lambda,
+            episode_ends=np.asarray(
+                batch.get("episode_ends", batch["dones"]), dtype=np.float32
+            ),
+            next_values=np.asarray(batch["next_values"], dtype=np.float32)
+            if "next_values" in batch
+            else None,
         )
         policy_batch = dict(batch)
         policy_batch["rewards"] = shaped_rewards.cpu().numpy()
         policy_batch["advantages"] = targets["advantages"]
         policy_batch["returns"] = targets["returns"]
-        logs = super().update(policy_batch)
+        logs = self.policy.update(policy_batch)
         divisor = float(self.discriminator_updates)
         logs.update(
             {
@@ -264,11 +299,11 @@ class AdversarialImitationAgent(PpoAgent):
         checkpoint_id = "last" if step_id is None else step_id
         torch.save(
             {
-                "model": self.model.state_dict(),
-                "optimizer": self.optimizer.state_dict(),
+                "model": self.policy.model.state_dict(),
+                "optimizer": self.policy.optimizer.state_dict(),
                 "discriminator": self.discriminator.state_dict(),
                 "discriminator_optimizer": self.discriminator_optimizer.state_dict(),
-                "update_step": self.update_step,
+                "update_step": self.policy.update_step,
             },
             os.path.join(
                 directory,
@@ -277,24 +312,22 @@ class AdversarialImitationAgent(PpoAgent):
         )
 
     def load(self, checkpoint_path: str) -> None:
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
-        self.model.load_state_dict(checkpoint["model"])
-        self.optimizer.load_state_dict(checkpoint["optimizer"])
+        checkpoint = torch_load(checkpoint_path, map_location=self.device)
+        self.policy.model.load_state_dict(checkpoint["model"])
+        self.policy.optimizer.load_state_dict(checkpoint["optimizer"])
         self.discriminator.load_state_dict(checkpoint["discriminator"])
         self.discriminator_optimizer.load_state_dict(
             checkpoint["discriminator_optimizer"]
         )
-        self.update_step = int(checkpoint.get("update_step", 0))
+        self.policy.update_step = int(checkpoint.get("update_step", 0))
 
 
-class GailAgent(AdversarialImitationAgent):
-    algorithm_name = "gail"
-    airl = False
+def make_gail_agent(cfg: Any) -> AdversarialImitationAgent:
+    return AdversarialImitationAgent(cfg, algorithm_name="gail", airl=False)
 
 
-class AirlAgent(AdversarialImitationAgent):
-    algorithm_name = "airl"
-    airl = True
+def make_airl_agent(cfg: Any) -> AdversarialImitationAgent:
+    return AdversarialImitationAgent(cfg, algorithm_name="airl", airl=True)
 
 
 register_algorithm(
@@ -313,7 +346,7 @@ register_algorithm(
 register_algorithm(
     AlgorithmSpec(
         name="gail",
-        factory=GailAgent,
+        factory=make_gail_agent,
         family="imitation",
         data_source="expert_mixed",
         runner="imitation",
@@ -326,7 +359,7 @@ register_algorithm(
 register_algorithm(
     AlgorithmSpec(
         name="airl",
-        factory=AirlAgent,
+        factory=make_airl_agent,
         family="imitation",
         data_source="expert_mixed",
         runner="imitation",

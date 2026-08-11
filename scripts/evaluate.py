@@ -21,12 +21,14 @@ from carla_rl_lab.config import Config
 from carla_rl_lab.envs import make_carla_env
 from carla_rl_lab.evaluation import evaluate_benchmark, summarize_suite
 from carla_rl_lab.logging import build_experiment_logger
+from carla_rl_lab.utils import apply_checkpoint_config
+from carla_rl_lab.utils import checkpoint_metadata as embedded_checkpoint_metadata
 
 
 def build_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Evaluate a CarlaRLLab checkpoint")
     parser.add_argument(
-        "--algorithm", "--algo", choices=list(list_algorithms()), default="sac"
+        "--algorithm", "--algo", choices=list(list_algorithms()), default=None
     )
     parser.add_argument("--checkpoint", required=True)
     target = parser.add_mutually_exclusive_group()
@@ -43,9 +45,9 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--episodes", type=int, default=0, help="0 uses all benchmark seeds"
     )
-    parser.add_argument("--port", type=int, default=Config.port)
+    parser.add_argument("--port", type=int, default=None)
     parser.add_argument(
-        "--network", choices=["SAC", "Attention_SAC"], default=Config.network
+        "--network", choices=["SAC", "Attention_SAC"], default=None
     )
     parser.add_argument(
         "--logger",
@@ -61,7 +63,7 @@ def build_argparser() -> argparse.ArgumentParser:
     return parser
 
 
-def checkpoint_metadata(path: str):
+def checkpoint_report(path: str):
     digest = hashlib.sha256()
     with open(path, "rb") as checkpoint_file:
         for chunk in iter(lambda: checkpoint_file.read(1024 * 1024), b""):
@@ -69,14 +71,26 @@ def checkpoint_metadata(path: str):
     return {
         "path": os.path.abspath(path),
         "sha256": digest.hexdigest(),
+        "metadata": embedded_checkpoint_metadata(path),
     }
 
 
 def evaluate_one(args: argparse.Namespace, benchmark_name: str):
     cfg = Config()
-    cfg.algorithm = args.algorithm
-    cfg.port = args.port
-    cfg.network = args.network
+    metadata = apply_checkpoint_config(cfg, args.checkpoint)
+    if args.algorithm is not None:
+        saved_algorithm = metadata.get("algorithm")
+        if saved_algorithm and args.algorithm != saved_algorithm:
+            raise ValueError(
+                "--algorithm={} does not match checkpoint algorithm={}".format(
+                    args.algorithm, saved_algorithm
+                )
+            )
+        cfg.algorithm = args.algorithm
+    if args.port is not None:
+        cfg.port = args.port
+    if args.network is not None:
+        cfg.network = args.network
     cfg.logger_backend = args.logger_backend
     cfg.wandb_mode = args.wandb_mode
 
@@ -110,7 +124,7 @@ def evaluate_one(args: argparse.Namespace, benchmark_name: str):
             logger=logger,
         )
         report["algorithm"] = cfg.algorithm
-        report["checkpoint"] = checkpoint_metadata(args.checkpoint)
+        report["checkpoint"] = checkpoint_report(args.checkpoint)
         report_path = os.path.join(output_dir, "report.json")
         with open(report_path, "w") as report_file:
             json.dump(report, report_file, indent=2)
@@ -145,7 +159,7 @@ def main() -> None:
             "artifacts",
             "evaluations",
             args.suite,
-            args.algorithm,
+            next(iter(reports.values()))["algorithm"],
         )
         os.makedirs(suite_dir, exist_ok=True)
         suite_path = os.path.join(suite_dir, "report.json")

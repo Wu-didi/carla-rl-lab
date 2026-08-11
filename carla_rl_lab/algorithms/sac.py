@@ -11,6 +11,7 @@ from torch.distributions import Normal
 
 from carla_rl_lab.algorithms.base import BaseAgent
 from carla_rl_lab.algorithms.registry import AlgorithmSpec, register_algorithm
+from carla_rl_lab.utils.checkpoint import torch_load
 
 
 class SemanticAttentionEncoder(nn.Module):
@@ -252,7 +253,7 @@ class SacAgent(BaseAgent):
         )
 
     def load(self, checkpoint_path: str) -> None:
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        checkpoint = torch_load(checkpoint_path, map_location=self.device)
         self.actor.load_state_dict(checkpoint["actor"])
         self.critic_1.load_state_dict(checkpoint["critic_1"])
         self.critic_2.load_state_dict(checkpoint["critic_2"])

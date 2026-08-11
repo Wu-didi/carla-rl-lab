@@ -14,11 +14,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from carla_rl_lab.algorithms import create_agent, get_algorithm, list_algorithms
 from carla_rl_lab.buffers import ReplayBuffer
 from carla_rl_lab.config import Config
-from carla_rl_lab.envs import make_carla_env
+from carla_rl_lab.envs import ACTION_MODES, make_carla_env
 from carla_rl_lab.logging import ExperimentLogger, build_experiment_logger
 from carla_rl_lab.observations import encode_observation
 from carla_rl_lab.rewards import list_reward_profiles
-from carla_rl_lab.utils import set_seed
+from carla_rl_lab.utils import (
+    apply_checkpoint_config,
+    checkpoint_metadata,
+    restore_training_state,
+    save_training_checkpoint,
+    set_seed,
+)
+from carla_rl_lab.utils.provenance import carla_versions
 
 
 def project_root() -> str:
@@ -38,6 +45,13 @@ def make_agent(cfg: Config):
             "runner='off_policy'.".format(cfg.algorithm, spec.runner)
         )
     return create_agent(cfg.algorithm, cfg)
+
+
+def off_policy_algorithms():
+    return [
+        name for name in list_algorithms()
+        if get_algorithm(name).runner == "off_policy"
+    ]
 
 
 def log_losses(
@@ -63,21 +77,18 @@ def log_action_metrics(
         return
     action_array = np.stack(actions)
     metrics = {}
-    for index, name in enumerate(("throttle", "steer", "brake")):
+    names = (
+        ("longitudinal", "steer")
+        if action_array.shape[1] == 2
+        else ("throttle", "steer", "brake")
+    )
+    for index, name in enumerate(names):
         values = action_array[:, index]
         metrics["action/{}_mean".format(name)] = float(values.mean())
         metrics["action/{}_std".format(name)] = float(values.std())
         metrics["action/{}_min".format(name)] = float(values.min())
         metrics["action/{}_max".format(name)] = float(values.max())
     logger.log(metrics, step)
-
-
-def save_checkpoint(cfg: Config, agent: Any, step: int) -> None:
-    checkpoint_dir = os.path.join(runs_dir(cfg), "checkpoints")
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    with open(os.path.join(checkpoint_dir, "gstep_last.txt"), "w") as step_file:
-        step_file.write(str(step))
-    agent.save(checkpoint_dir, step_id="last")
 
 
 def train(cfg: Config) -> None:
@@ -92,6 +103,8 @@ def train(cfg: Config) -> None:
         env = make_carla_env(cfg)
         agent = make_agent(cfg)
         replay_buffer = ReplayBuffer(cfg.buffer_size)
+        global_step = 0
+        start_episode = 0
 
         if cfg.use_pretrained_model:
             if not os.path.isfile(cfg.pretrained_model_path):
@@ -99,11 +112,19 @@ def train(cfg: Config) -> None:
                     "Checkpoint not found: {}".format(cfg.pretrained_model_path)
                 )
             agent.load(cfg.pretrained_model_path)
+            metadata = checkpoint_metadata(cfg.pretrained_model_path)
+            trainer_state = restore_training_state(cfg.pretrained_model_path)
+            global_step = int(metadata.get("global_step", 0))
+            start_episode = int(trainer_state.get("episode", -1)) + 1
+            replay_state = trainer_state.get("replay_buffer")
+            if replay_state is not None:
+                replay_buffer.load_state_dict(replay_state)
             print("Loaded model {}".format(cfg.pretrained_model_path))
 
-        global_step = 0
-        for episode in range(cfg.max_episodes):
-            obs = env.reset()
+        checkpoint_dir = os.path.join(log_dir, "checkpoints")
+        last_checkpoint_step = global_step
+        for episode in range(start_episode, cfg.max_episodes):
+            obs = env.reset(seed=cfg.seed + episode)
             done = False
             episode_reward = 0.0
             episode_cost = 0.0
@@ -128,8 +149,11 @@ def train(cfg: Config) -> None:
                 next_obs_vector = encode_observation(
                     next_obs, cfg.state_dim, cfg.risk_field_sectors
                 )
+                terminal = bool(
+                    done and info.get("termination_reason") != "timeout"
+                )
                 replay_buffer.add(
-                    obs_vector, action, reward, next_obs_vector, done
+                    obs_vector, action, reward, next_obs_vector, terminal
                 )
 
                 ready_size = max(cfg.minimal_size, cfg.batch_size)
@@ -162,7 +186,20 @@ def train(cfg: Config) -> None:
                 global_step,
             )
             log_action_metrics(logger, episode_actions, global_step)
-            save_checkpoint(cfg, agent, global_step)
+            if (
+                global_step - last_checkpoint_step >= cfg.checkpoint_interval
+                or episode + 1 >= cfg.max_episodes
+            ):
+                trainer_state = {
+                    "episode": episode,
+                    "carla_versions": carla_versions(env),
+                }
+                if cfg.checkpoint_replay_buffer:
+                    trainer_state["replay_buffer"] = replay_buffer.state_dict()
+                save_training_checkpoint(
+                    agent, cfg, checkpoint_dir, global_step, trainer_state
+                )
+                last_checkpoint_step = global_step
             print(
                 "[Episode {:03d}] Reward={:.2f} Steps={} gstep={}".format(
                     episode, episode_reward, episode_steps, global_step
@@ -184,37 +221,38 @@ def build_argparser() -> argparse.ArgumentParser:
         "--algorithm",
         "--algo",
         dest="algorithm",
-        default=Config.algorithm,
-        choices=list(list_algorithms()),
+        default=None,
+        choices=off_policy_algorithms(),
     )
-    parser.add_argument("--town", default=Config.town)
-    parser.add_argument("--port", type=int, default=Config.port)
+    parser.add_argument("--town", default=None)
+    parser.add_argument("--port", type=int, default=None)
     parser.add_argument(
-        "--network", default=Config.network, choices=["SAC", "Attention_SAC"]
+        "--network", default=None, choices=["SAC", "Attention_SAC"]
     )
+    parser.add_argument("--action-mode", choices=ACTION_MODES, default=None)
     parser.add_argument(
         "--max-episodes",
         "--max_episodes",
         type=int,
-        default=Config.max_episodes,
+        default=None,
     )
-    parser.add_argument("--seed", type=int, default=Config.seed)
+    parser.add_argument("--seed", type=int, default=None)
     parser.add_argument(
         "--reward",
         dest="reward_profile",
-        default=Config.reward_profile,
+        default=None,
         choices=list(list_reward_profiles()),
     )
     parser.add_argument(
         "--logger",
         dest="logger_backend",
-        default=Config.logger_backend,
+        default=None,
         choices=["tensorboard", "wandb", "both", "none"],
     )
-    parser.add_argument("--run-name", default=Config.run_name)
+    parser.add_argument("--run-name", default=None)
     parser.add_argument(
         "--wandb-mode",
-        default=Config.wandb_mode,
+        default=None,
         choices=["online", "offline", "disabled"],
     )
     parser.add_argument(
@@ -226,16 +264,35 @@ def build_argparser() -> argparse.ArgumentParser:
 
 
 def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
-    cfg.algorithm = args.algorithm
-    cfg.town = args.town
-    cfg.port = args.port
-    cfg.network = args.network
-    cfg.max_episodes = args.max_episodes
-    cfg.seed = args.seed
-    cfg.reward_profile = args.reward_profile
-    cfg.logger_backend = args.logger_backend
-    cfg.run_name = args.run_name
-    cfg.wandb_mode = args.wandb_mode
+    if args.checkpoint:
+        apply_checkpoint_config(cfg, args.checkpoint)
+        saved_algorithm = checkpoint_metadata(args.checkpoint).get("algorithm")
+        if args.algorithm and saved_algorithm and args.algorithm != saved_algorithm:
+            raise ValueError(
+                "--algorithm={} does not match checkpoint algorithm={}".format(
+                    args.algorithm, saved_algorithm
+                )
+            )
+    for name in (
+        "algorithm",
+        "town",
+        "port",
+        "network",
+        "action_mode",
+        "max_episodes",
+        "seed",
+        "reward_profile",
+        "logger_backend",
+        "run_name",
+        "wandb_mode",
+    ):
+        value = getattr(args, name)
+        if value is not None:
+            setattr(cfg, name, value)
+    if args.action_mode is not None:
+        cfg.action_dim = 2 if cfg.action_mode == "longitudinal_2d" else 3
+        if cfg.algorithm == "sac":
+            cfg.target_entropy = -float(cfg.action_dim)
     cfg.pretrained_model_path = args.checkpoint
     cfg.use_pretrained_model = bool(args.checkpoint)
     return cfg

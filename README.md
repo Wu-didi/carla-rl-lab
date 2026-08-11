@@ -38,12 +38,12 @@
 | --- | --- |
 | Algorithms | SAC, TD3, DDPG, PPO, A2C, TD3+BC, CQL, IQL, BC, GAIL, AIRL |
 | Policy networks | Gaussian and deterministic actor-critic, semantic-attention SAC |
-| CARLA versions | 0.9.13 documented; 0.9.15 code-compatible, formal validation pending |
-| CARLA control | Throttle, steering, brake |
+| CARLA versions | 0.9.13 documented; 0.9.15 connection/reset/step verified, full benchmark pending |
+| CARLA control | Explicit `signed_3d` and `longitudinal_2d` policy action spaces |
 | Rewards | Legacy reward and editable `research_v1` function |
 | Tracking | TensorBoard, W&B online/offline, per-term reward logs |
 | Benchmark | Paper-standard launchers plus a lightweight internal suite |
-| Validation | CPU smoke tests for every algorithm, reward, logger, and evaluator |
+| Validation | CPU update/regression tests; CARLA convergence validation is still pending |
 
 ## Explicit Training Paths
 
@@ -249,7 +249,16 @@ python scripts/train.py --algo ddpg --checkpoint /path/to/ddpg_ckpt.pt
 # PPO or A2C collect fresh rollouts from CARLA
 python scripts/train_on_policy.py --algo ppo --total-timesteps 1000000
 
-# Offline RL consumes a fixed five-field .npz transition dataset
+# Collect an expert dataset with CARLA Traffic Manager
+python scripts/collect_dataset.py \
+  --policy autopilot \
+  --transitions 100000 \
+  --output artifacts/datasets/town05_autopilot.npz
+
+# Verify a running server with a real connection/reset/step smoke
+python scripts/smoke_carla.py --port 2000 --town Town05 --steps 3
+
+# Offline RL consumes the collected, versioned .npz transition dataset
 python scripts/train_offline.py --algo td3_bc --dataset /path/to/transitions.npz
 python scripts/train_offline.py --algo cql --dataset /path/to/transitions.npz
 python scripts/train_offline.py --algo iql --dataset /path/to/transitions.npz
@@ -261,9 +270,28 @@ python scripts/train_imitation.py --algo airl --expert-dataset /path/to/expert.n
 ```
 
 Runs are stored under `artifacts/runs/<run-name>/` and are ignored by Git.
-Offline transition datasets are `.npz` files containing `states`, `actions`,
-`rewards`, `next_states`, and `dones`. BC and GAIL only require `states` and
-`actions`; AIRL requires the full transition format.
+Every run writes `run_config.json`. Checkpoint directories contain immutable
+step checkpoints, a bounded `checkpoint_manifest.json`, and a `*_ckpt_last.pt`
+alias. New checkpoints embed the full config, Git commit, global step, RNG,
+software/hardware information, and CARLA versions. Evaluation reads model
+dimensions and algorithm choice from this metadata automatically.
+
+Version 2 datasets contain `states`, `actions`, `rewards`, `next_states`,
+`terminals`, `timeouts`, `episode_ids`, `costs`, and JSON metadata. `dones`
+means true terminal only, so offline value targets bootstrap across time-limit
+truncations. Legacy five-field datasets remain readable, but their timeout
+semantics are recorded as unknown. BC and GAIL only require `states/actions`;
+AIRL requires complete transitions.
+
+The default `signed_3d` action is backward compatible: negative throttle or
+brake values mean that actuator is inactive. New experiments can choose
+`longitudinal_2d`, where positive longitudinal action is throttle and negative
+action is brake. Dataset metadata prevents these representations from being
+mixed silently:
+
+```bash
+python scripts/train.py --algo sac --action-mode longitudinal_2d
+```
 
 ## Edit The Research Code
 
@@ -361,10 +389,10 @@ paper protocol/version requirements, agent compatibility, and metric semantics.
 
 | Data source | Family | Algorithms | Status |
 | --- | --- | --- | --- |
-| Online | Off-policy | SAC, TD3, DDPG | Ready |
-| Online | On-policy | PPO, A2C | Ready |
-| Offline | Offline RL | CQL, IQL, TD3+BC | Ready |
-| Expert / mixed | Imitation | BC, GAIL, AIRL | Ready |
+| Online | Off-policy | SAC, TD3, DDPG | Implemented + CPU tested |
+| Online | On-policy | PPO, A2C | Implemented + CPU tested |
+| Offline | Offline RL | CQL(H), IQL, TD3+BC | Implemented + CPU tested |
+| Expert / mixed | Imitation | BC, GAIL, AIRL | Implemented + CPU tested |
 
 On-policy, offline, and imitation methods use dedicated rollout, dataset, and
 mixed runners instead of being forced into the replay-buffer loop.
@@ -386,8 +414,10 @@ scripts/
   train_on_policy.py # Online rollout loop
   train_offline.py   # Fixed-dataset loop
   train_imitation.py # Expert-only or expert/online mixed loop
+  collect_dataset.py # Versioned random/autopilot dataset collection
+  smoke_carla.py     # Real server connection/reset/step smoke
   evaluate.py        # Lightweight deterministic benchmark entry point
-  evaluate_paper.py  # Official Leaderboard/Bench2Drive adapter
+  evaluate_paper.py  # Official Leaderboard/Bench2Drive preflight + launcher
   launch_carla.sh    # Remembered CARLA launch commands
 tests/               # Fast CPU smoke tests
 artifacts/           # Ignored runs, checkpoints, reports
@@ -404,12 +434,13 @@ length of the algorithm list.
 
 - [ ] Add a CARLA 0.9.15 installation path with the same download, extraction,
   Python API, launch, and troubleshooting detail as the 0.9.13 guide.
-- [ ] Add runtime CARLA client/server version reporting to experiment metadata.
+- [x] Add runtime CARLA client/server version reporting to dataset/checkpoint metadata.
 - [ ] Run connection, reset/step, one-episode, and `lane_following_v0` checks on
   both CARLA 0.9.13 and 0.9.15.
 - [ ] Publish a compatibility table covering Python, Ubuntu, CARLA, maps, and
-  known limitations. The current code is already compatible with 0.9.15; the
-  missing work is formal documentation and repeatable validation.
+  known limitations. A local 0.9.15 client/server connection, reset, and
+  three-step smoke passed on 2026-08-12; full training and benchmark validation
+  remain pending.
 
 ### 2. Complete the main RL algorithm families
 

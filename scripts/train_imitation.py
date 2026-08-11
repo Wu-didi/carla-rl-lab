@@ -12,10 +12,17 @@ from carla_rl_lab.algorithms import create_agent, get_algorithm, list_algorithms
 from carla_rl_lab.buffers import OfflineDataset, RolloutBuffer
 from carla_rl_lab.config import Config
 from carla_rl_lab.envs import make_carla_env
-from carla_rl_lab.logging import build_experiment_logger
+from carla_rl_lab.logging import action_metrics, build_experiment_logger
 from carla_rl_lab.observations import encode_observation
 from carla_rl_lab.rewards import list_reward_profiles
-from carla_rl_lab.utils import set_seed
+from carla_rl_lab.utils import (
+    apply_checkpoint_config,
+    checkpoint_metadata,
+    restore_training_state,
+    save_training_checkpoint,
+    set_seed,
+)
+from carla_rl_lab.utils.provenance import carla_versions
 
 
 def imitation_algorithms():
@@ -37,16 +44,31 @@ def output_paths(cfg: Config):
 
 def train_bc(cfg: Config, dataset: OfflineDataset, logger, checkpoint_dir: str) -> None:
     agent = create_agent("bc", cfg)
+    start_update = 1
     if cfg.use_pretrained_model:
         agent.load(cfg.pretrained_model_path)
-    for update in range(1, cfg.imitation_updates + 1):
+        metadata = checkpoint_metadata(cfg.pretrained_model_path)
+        trainer_state = restore_training_state(cfg.pretrained_model_path)
+        start_update = int(metadata.get("global_step", 0)) + 1
+        if "dataset_rng_state" in trainer_state:
+            dataset.rng.set_state(trainer_state["dataset_rng_state"])
+    for update in range(start_update, cfg.imitation_updates + 1):
         losses = agent.update(dataset.sample(cfg.batch_size, ("states", "actions")))
         logger.log(
             {"train/{}".format(name): float(value) for name, value in losses.items()},
             update,
         )
         if update % cfg.checkpoint_interval == 0 or update == cfg.imitation_updates:
-            agent.save(checkpoint_dir, "last")
+            save_training_checkpoint(
+                agent,
+                cfg,
+                checkpoint_dir,
+                update,
+                {
+                    "dataset_metadata": dataset.metadata,
+                    "dataset_rng_state": dataset.rng.get_state(),
+                },
+            )
             print("[Update {:07d}] algorithm=bc".format(update))
 
 
@@ -57,15 +79,26 @@ def train_adversarial(
     try:
         env = make_carla_env(cfg)
         agent = create_agent(cfg.algorithm, cfg)
+        global_step = 0
+        update_index = 0
+        episode_index = 0
         if cfg.use_pretrained_model:
             agent.load(cfg.pretrained_model_path)
-        observation = env.reset()
+            metadata = checkpoint_metadata(cfg.pretrained_model_path)
+            trainer_state = restore_training_state(cfg.pretrained_model_path)
+            global_step = int(metadata.get("global_step", 0))
+            update_index = int(trainer_state.get("update_index", 0))
+            episode_index = int(trainer_state.get("episode_index", 0))
+            if "dataset_rng_state" in trainer_state:
+                dataset.rng.set_state(trainer_state["dataset_rng_state"])
+        observation = env.reset(seed=cfg.seed + episode_index)
         state = encode_observation(
             observation, cfg.state_dim, cfg.risk_field_sectors
         )
-        global_step = 0
-        update_index = 0
         last_done = False
+        episode_return = 0.0
+        episode_cost = 0.0
+        episode_length = 0
 
         while global_step < cfg.total_timesteps:
             rollout_size = min(cfg.rollout_steps, cfg.total_timesteps - global_step)
@@ -76,13 +109,25 @@ def train_adversarial(
                     next_observation, reward, cost, done, info = env.step(action)
                 except Exception:
                     traceback.print_exc()
-                    observation = env.reset()
+                    rollout.end_episode(next_value=agent.value(state), terminal=False)
+                    last_done = True
+                    episode_index += 1
+                    observation = env.reset(seed=cfg.seed + episode_index)
                     state = encode_observation(
                         observation, cfg.state_dim, cfg.risk_field_sectors
                     )
+                    episode_return = 0.0
+                    episode_cost = 0.0
+                    episode_length = 0
                     continue
                 next_state = encode_observation(
                     next_observation, cfg.state_dim, cfg.risk_field_sectors
+                )
+                terminal = bool(
+                    done and info.get("termination_reason") != "timeout"
+                )
+                timeout_value = (
+                    agent.value(next_state) if done and not terminal else None
                 )
                 rollout.add(
                     state,
@@ -92,12 +137,33 @@ def train_adversarial(
                     value,
                     log_prob,
                     next_state=next_state,
+                    terminal=terminal,
+                    next_value=timeout_value,
                 )
                 state = next_state
                 last_done = bool(done)
                 global_step += 1
+                episode_return += float(reward)
+                episode_cost += float(cost)
+                episode_length += 1
+                reward_terms = info.get("reward_terms", {})
+                if reward_terms:
+                    logger.log(reward_terms, global_step)
                 if done:
-                    observation = env.reset()
+                    logger.log(
+                        {
+                            "episode/reward": episode_return,
+                            "episode/cost": episode_cost,
+                            "episode/length": float(episode_length),
+                            "episode/index": float(episode_index),
+                        },
+                        global_step,
+                    )
+                    episode_index += 1
+                    episode_return = 0.0
+                    episode_cost = 0.0
+                    episode_length = 0
+                    observation = env.reset(seed=cfg.seed + episode_index)
                     state = encode_observation(
                         observation, cfg.state_dim, cfg.risk_field_sectors
                     )
@@ -110,7 +176,7 @@ def train_adversarial(
             batch = rollout.batch(last_value)
             expert_fields = ["states", "actions"]
             if cfg.algorithm == "airl":
-                expert_fields.append("next_states")
+                expert_fields.extend(("next_states", "dones"))
             expert_batch = dataset.sample(len(rollout), expert_fields)
             for name, values in expert_batch.items():
                 batch["expert_{}".format(name)] = values
@@ -119,12 +185,25 @@ def train_adversarial(
                 {"train/{}".format(name): float(value) for name, value in losses.items()},
                 global_step,
             )
+            logger.log(action_metrics(batch["actions"]), global_step)
             update_index += 1
             if (
                 global_step % cfg.checkpoint_interval < len(rollout)
                 or global_step >= cfg.total_timesteps
             ):
-                agent.save(checkpoint_dir, "last")
+                save_training_checkpoint(
+                    agent,
+                    cfg,
+                    checkpoint_dir,
+                    global_step,
+                    {
+                        "update_index": update_index,
+                        "episode_index": episode_index if last_done else episode_index + 1,
+                        "dataset_metadata": dataset.metadata,
+                        "dataset_rng_state": dataset.rng.get_state(),
+                        "carla_versions": carla_versions(env),
+                    },
+                )
             print(
                 "[Update {:05d}] algorithm={} steps={}".format(
                     update_index, cfg.algorithm, global_step
@@ -146,8 +225,24 @@ def train(cfg: Config) -> None:
         require_transitions=cfg.algorithm == "airl",
         seed=cfg.seed,
     )
+    if not cfg.use_pretrained_model:
+        cfg.state_dim = dataset.state_dim
+        cfg.action_dim = dataset.action_dim
+        cfg.action_mode = dataset.metadata.get(
+            "action_mode",
+            "longitudinal_2d" if dataset.action_dim == 2 else cfg.action_mode,
+        )
+        source_config = dataset.metadata.get("config", {})
+        cfg.risk_field_sectors = int(
+            source_config.get("risk_field_sectors", cfg.risk_field_sectors)
+        )
+        cfg.max_waypoints = int(source_config.get("max_waypoints", cfg.max_waypoints))
     if dataset.state_dim != cfg.state_dim or dataset.action_dim != cfg.action_dim:
         raise ValueError("expert dataset dimensions do not match Config")
+    dataset_action_mode = dataset.metadata.get("action_mode")
+    if dataset_action_mode and dataset_action_mode != cfg.action_mode:
+        raise ValueError("expert dataset action_mode does not match Config")
+    print("[Config]", asdict(cfg))
     log_dir, checkpoint_dir = output_paths(cfg)
     logger = build_experiment_logger(cfg, log_dir, asdict(cfg))
     try:
@@ -161,19 +256,19 @@ def train(cfg: Config) -> None:
 
 def build_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CarlaRLLab imitation trainer")
-    parser.add_argument("--algorithm", "--algo", choices=imitation_algorithms(), default="bc")
+    parser.add_argument("--algorithm", "--algo", choices=imitation_algorithms(), default=None)
     parser.add_argument("--expert-dataset", dest="expert_dataset_path", required=True)
-    parser.add_argument("--updates", dest="imitation_updates", type=int, default=Config.imitation_updates)
-    parser.add_argument("--total-timesteps", type=int, default=Config.total_timesteps)
-    parser.add_argument("--rollout-steps", type=int, default=Config.rollout_steps)
-    parser.add_argument("--batch-size", type=int, default=Config.batch_size)
-    parser.add_argument("--checkpoint-interval", type=int, default=Config.checkpoint_interval)
-    parser.add_argument("--town", default=Config.town)
-    parser.add_argument("--port", type=int, default=Config.port)
-    parser.add_argument("--seed", type=int, default=Config.seed)
-    parser.add_argument("--reward", dest="reward_profile", choices=list(list_reward_profiles()), default=Config.reward_profile)
-    parser.add_argument("--logger", dest="logger_backend", choices=["tensorboard", "wandb", "both", "none"], default=Config.logger_backend)
-    parser.add_argument("--run-name", default=Config.run_name)
+    parser.add_argument("--updates", dest="imitation_updates", type=int, default=None)
+    parser.add_argument("--total-timesteps", type=int, default=None)
+    parser.add_argument("--rollout-steps", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--checkpoint-interval", type=int, default=None)
+    parser.add_argument("--town", default=None)
+    parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--reward", dest="reward_profile", choices=list(list_reward_profiles()), default=None)
+    parser.add_argument("--logger", dest="logger_backend", choices=["tensorboard", "wandb", "both", "none"], default=None)
+    parser.add_argument("--run-name", default=None)
     parser.add_argument("--checkpoint", default="")
     return parser
 
@@ -181,12 +276,17 @@ def build_argparser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_argparser().parse_args()
     cfg = Config()
+    cfg.algorithm = "bc"
+    if args.checkpoint:
+        apply_checkpoint_config(cfg, args.checkpoint)
+        saved_algorithm = checkpoint_metadata(args.checkpoint).get("algorithm")
+        if args.algorithm and saved_algorithm and args.algorithm != saved_algorithm:
+            raise ValueError("algorithm does not match checkpoint metadata")
     for name, value in vars(args).items():
-        if name != "checkpoint":
+        if name != "checkpoint" and value is not None:
             setattr(cfg, name, value)
     cfg.pretrained_model_path = args.checkpoint
     cfg.use_pretrained_model = bool(args.checkpoint)
-    print("[Config]", asdict(cfg))
     train(cfg)
 
 

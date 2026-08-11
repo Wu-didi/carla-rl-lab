@@ -33,6 +33,18 @@ Registry metadata records `data_source`, `family`, and the required `runner`.
 A trainer rejects algorithms requiring a different runner instead of silently
 using an invalid update schedule.
 
+GAIL and AIRL compose a PPO policy instead of inheriting through the PPO agent
+hierarchy. This keeps policy reuse explicit while limiting agent inheritance.
+
+## Experiment Boundary
+
+Datasets and checkpoints are self-describing experiment artifacts. Dataset
+metadata records observation/action semantics and separates terminal events
+from time-limit truncation. Checkpoints record model configuration, source
+commit, global step, RNG state, software/hardware details, and CARLA versions.
+CARLA world state is not serialized; online resume starts a fresh,
+deterministically seeded episode.
+
 ## Reward Boundary
 
 The environment owns simulation state and termination. Reward functions consume

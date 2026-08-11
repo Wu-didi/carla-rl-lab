@@ -34,6 +34,7 @@ class Config:
     hidden_dim: int = 540
     action_dim: int = 3
     action_bound: float = 1.0
+    action_mode: str = 'signed_3d'  # signed_3d (compatible) or longitudinal_2d
     gamma: float = 0.99
     tau: float = 0.01
     actor_lr: float = 1e-4
@@ -83,6 +84,9 @@ class Config:
     batch_size: int = 100
     max_episodes: int = 10000
     train_every_step: bool = True
+    max_walker_spawn_attempts: int = 200
+    checkpoint_keep: int = 5
+    checkpoint_replay_buffer: bool = False
 
     # Experiment logging
     logger_backend: str = 'tensorboard'  # tensorboard, wandb, both, none

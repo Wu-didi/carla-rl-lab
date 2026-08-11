@@ -30,6 +30,11 @@ def make_carla_env(cfg: Any) -> CarlaEnv:
             "enable_risk_field": cfg.enable_risk_field,
             "risk_field_sectors": cfg.risk_field_sectors,
             "risk_field_alpha": cfg.risk_field_alpha,
+            "state_dim": cfg.state_dim,
+            "action_dim": cfg.action_dim,
+            "action_bound": cfg.action_bound,
+            "action_mode": cfg.action_mode,
+            "max_walker_spawn_attempts": cfg.max_walker_spawn_attempts,
             "reward_fn": reward_fn,
             "seed": cfg.seed,
         }

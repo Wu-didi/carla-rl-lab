@@ -17,6 +17,7 @@ from carla_rl_lab.algorithms.common import (
     soft_update,
 )
 from carla_rl_lab.algorithms.registry import AlgorithmSpec, register_algorithm
+from carla_rl_lab.utils.checkpoint import torch_load
 
 
 def transition_tensors(
@@ -231,7 +232,7 @@ class Td3BcAgent(OfflineAgent):
         )
 
     def load(self, checkpoint_path: str) -> None:
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        checkpoint = torch_load(checkpoint_path, map_location=self.device)
         for name in (
             "actor",
             "actor_target",
@@ -248,7 +249,7 @@ class Td3BcAgent(OfflineAgent):
 
 
 class CqlAgent(OfflineAgent):
-    """Continuous Conservative Q-Learning with SAC-style policy learning."""
+    """Continuous CQL(H) with SAC policy learning and density correction."""
 
     algorithm_name = "cql"
 
@@ -259,6 +260,10 @@ class CqlAgent(OfflineAgent):
         self.num_random = int(getattr(cfg, "cql_num_random", 10))
         self.entropy_alpha = float(getattr(cfg, "offline_entropy_alpha", 0.2))
         self.action_dim = int(cfg.action_dim)
+        if self.temperature <= 0.0:
+            raise ValueError("cql_temperature must be positive")
+        if self.num_random <= 0:
+            raise ValueError("cql_num_random must be positive")
 
         self.actor = SquashedGaussianPolicy(
             cfg.state_dim, cfg.hidden_dim, cfg.action_dim, cfg.action_bound
@@ -308,14 +313,23 @@ class CqlAgent(OfflineAgent):
             device=self.device,
         ).uniform_(-self.action_bound, self.action_bound)
         with torch.no_grad():
-            current_policy_actions = self.actor.sample(repeated_states)[0]
-            next_policy_actions = self.actor.sample(repeated_next_states)[0]
+            current_policy_actions, current_log_probs = self.actor.sample(
+                repeated_states
+            )
+            next_policy_actions, next_log_probs = self.actor.sample(
+                repeated_next_states
+            )
 
-        q_random = critic(repeated_states, random_actions).reshape(batch_size, -1)
-        q_current = critic(repeated_states, current_policy_actions).reshape(
-            batch_size, -1
-        )
-        q_next = critic(repeated_states, next_policy_actions).reshape(batch_size, -1)
+        random_log_density = -self.action_dim * np.log(2.0 * self.action_bound)
+        q_random = (
+            critic(repeated_states, random_actions) - random_log_density
+        ).reshape(batch_size, -1)
+        q_current = (
+            critic(repeated_states, current_policy_actions) - current_log_probs
+        ).reshape(batch_size, -1)
+        q_next = (
+            critic(repeated_states, next_policy_actions) - next_log_probs
+        ).reshape(batch_size, -1)
         candidates = torch.cat([q_random, q_current, q_next], dim=1)
         conservative_q = torch.logsumexp(
             candidates / self.temperature, dim=1
@@ -396,7 +410,7 @@ class CqlAgent(OfflineAgent):
         )
 
     def load(self, checkpoint_path: str) -> None:
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        checkpoint = torch_load(checkpoint_path, map_location=self.device)
         for name in (
             "actor",
             "critic_1",
@@ -540,7 +554,7 @@ class IqlAgent(OfflineAgent):
         )
 
     def load(self, checkpoint_path: str) -> None:
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        checkpoint = torch_load(checkpoint_path, map_location=self.device)
         for name in (
             "actor",
             "critic_1",

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 from typing import Any, Dict, Iterable, Mapping, Optional
 
 import numpy as np
 
 
+SCHEMA_VERSION = 2
 TRANSITION_FIELDS = ("states", "actions", "rewards", "next_states", "dones")
 EXPERT_FIELDS = ("states", "actions")
+OPTIONAL_FIELDS = ("terminals", "timeouts", "episode_ids", "costs")
 
 
 class OfflineDataset:
@@ -21,14 +26,19 @@ class OfflineDataset:
         arrays: Mapping[str, Any],
         require_transitions: bool = True,
         seed: Optional[int] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        required = TRANSITION_FIELDS if require_transitions else EXPERT_FIELDS
+        had_terminals = "terminals" in arrays
+        had_metadata = metadata is not None or "metadata_json" in arrays
+        required = TRANSITION_FIELDS[:4] if require_transitions else EXPERT_FIELDS
         missing = [name for name in required if name not in arrays]
+        if require_transitions and "dones" not in arrays and "terminals" not in arrays:
+            missing.append("dones or terminals")
         if missing:
             raise ValueError("dataset is missing fields: {}".format(", ".join(missing)))
 
         self.arrays: Dict[str, np.ndarray] = {}
-        for name in TRANSITION_FIELDS:
+        for name in TRANSITION_FIELDS + OPTIONAL_FIELDS:
             if name in arrays:
                 self.arrays[name] = np.asarray(arrays[name], dtype=np.float32)
 
@@ -49,7 +59,49 @@ class OfflineDataset:
             if self.arrays["next_states"].shape != self.arrays["states"].shape:
                 raise ValueError("next_states must have the same shape as states")
             self.arrays["rewards"] = self.arrays["rewards"].reshape(-1)
-            self.arrays["dones"] = self.arrays["dones"].reshape(-1)
+            if "terminals" not in self.arrays:
+                self.arrays["terminals"] = self.arrays["dones"].reshape(-1).copy()
+            else:
+                self.arrays["terminals"] = self.arrays["terminals"].reshape(-1)
+            if "timeouts" not in self.arrays:
+                self.arrays["timeouts"] = np.zeros(size, dtype=np.float32)
+            else:
+                self.arrays["timeouts"] = self.arrays["timeouts"].reshape(-1)
+            # Algorithms bootstrap across time-limit truncations, but not true terminals.
+            self.arrays["dones"] = self.arrays["terminals"].copy()
+
+        for name in ("states", "actions", "rewards", "next_states"):
+            if name in self.arrays and not np.isfinite(self.arrays[name]).all():
+                raise ValueError("dataset field '{}' contains NaN or Inf".format(name))
+
+        raw_metadata = arrays.get("metadata_json")
+        if metadata is None and raw_metadata is not None:
+            try:
+                metadata = json.loads(str(np.asarray(raw_metadata).reshape(()).item()))
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise ValueError("invalid metadata_json in dataset") from exc
+        self.metadata = dict(metadata or {})
+        self.metadata.setdefault("schema_version", SCHEMA_VERSION if had_metadata else 1)
+        self.metadata.setdefault("size", size)
+        self.metadata.setdefault("state_dim", int(self.arrays["states"].shape[1]))
+        self.metadata.setdefault("action_dim", int(self.arrays["actions"].shape[1]))
+        if require_transitions:
+            self.metadata.setdefault(
+                "dones_meaning",
+                "true_terminal_only" if had_terminals else "terminal_or_timeout_unknown",
+            )
+
+        for name, actual in (
+            ("size", size),
+            ("state_dim", int(self.arrays["states"].shape[1])),
+            ("action_dim", int(self.arrays["actions"].shape[1])),
+        ):
+            if name in self.metadata and int(self.metadata[name]) != actual:
+                raise ValueError(
+                    "dataset metadata {}={} does not match arrays ({})".format(
+                        name, self.metadata[name], actual
+                    )
+                )
 
         self.require_transitions = bool(require_transitions)
         self.rng = np.random.RandomState(seed)
@@ -66,7 +118,22 @@ class OfflineDataset:
         return cls(arrays, require_transitions=require_transitions, seed=seed)
 
     def save(self, path: str) -> None:
-        np.savez_compressed(path, **self.arrays)
+        if not path.lower().endswith(".npz"):
+            raise ValueError("offline dataset path must end with .npz")
+        payload = dict(self.arrays)
+        payload["metadata_json"] = np.asarray(
+            json.dumps(self.metadata, sort_keys=True), dtype=np.str_
+        )
+        descriptor, temporary_path = tempfile.mkstemp(
+            prefix=".dataset-", suffix=".npz", dir=os.path.dirname(os.path.abspath(path))
+        )
+        os.close(descriptor)
+        try:
+            np.savez_compressed(temporary_path, **payload)
+            os.replace(temporary_path, path)
+        finally:
+            if os.path.exists(temporary_path):
+                os.unlink(temporary_path)
 
     def sample(
         self, batch_size: int, fields: Optional[Iterable[str]] = None
@@ -90,4 +157,3 @@ class OfflineDataset:
 
     def __len__(self) -> int:
         return int(self.arrays["states"].shape[0])
-

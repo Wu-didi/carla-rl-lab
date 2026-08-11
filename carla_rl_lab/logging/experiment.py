@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from typing import Any, Dict, Optional
+
+from carla_rl_lab.utils.provenance import git_commit, utc_timestamp
 
 
 class ExperimentLogger:
@@ -17,6 +21,15 @@ class ExperimentLogger:
         entity: Optional[str] = None,
         wandb_mode: str = "offline",
     ):
+        os.makedirs(log_dir, exist_ok=True)
+        _write_json(
+            os.path.join(log_dir, "run_config.json"),
+            {
+                "created_at": utc_timestamp(),
+                "git_commit": git_commit(),
+                "config": config,
+            },
+        )
         self.writer = None
         self.wandb = None
         self.wandb_run = None
@@ -71,6 +84,40 @@ class ExperimentLogger:
         if self.wandb_run is not None:
             self.wandb_run.finish()
             self.wandb_run = None
+
+
+def _write_json(path: str, payload: Dict[str, Any]) -> None:
+    descriptor, temporary_path = tempfile.mkstemp(
+        prefix=".run-config-", suffix=".tmp", dir=os.path.dirname(path)
+    )
+    try:
+        with os.fdopen(descriptor, "w") as output:
+            json.dump(payload, output, indent=2, sort_keys=True, default=str)
+            output.write("\n")
+        os.replace(temporary_path, path)
+    finally:
+        if os.path.exists(temporary_path):
+            os.unlink(temporary_path)
+
+
+def action_metrics(actions: Any) -> Dict[str, float]:
+    import numpy as np
+
+    values = np.asarray(actions, dtype=np.float32)
+    if values.ndim != 2 or values.shape[0] == 0:
+        return {}
+    names = (
+        ("longitudinal", "steer")
+        if values.shape[1] == 2
+        else ("throttle", "steer", "brake")
+    )
+    metrics = {}
+    for index, name in enumerate(names):
+        metrics["action/{}_mean".format(name)] = float(values[:, index].mean())
+        metrics["action/{}_std".format(name)] = float(values[:, index].std())
+        metrics["action/{}_min".format(name)] = float(values[:, index].min())
+        metrics["action/{}_max".format(name)] = float(values[:, index].max())
+    return metrics
 
 
 def build_experiment_logger(

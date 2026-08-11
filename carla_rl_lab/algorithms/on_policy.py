@@ -12,6 +12,7 @@ from torch.distributions import Normal
 from carla_rl_lab.algorithms.base import BaseAgent
 from carla_rl_lab.algorithms.common import mlp
 from carla_rl_lab.algorithms.registry import AlgorithmSpec, register_algorithm
+from carla_rl_lab.utils.checkpoint import torch_load
 
 
 class ActorCritic(nn.Module):
@@ -149,7 +150,7 @@ class OnPolicyAgent(BaseAgent):
         )
 
     def load(self, checkpoint_path: str) -> None:
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        checkpoint = torch_load(checkpoint_path, map_location=self.device)
         self.model.load_state_dict(checkpoint["model"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         self.update_step = int(checkpoint.get("update_step", 0))

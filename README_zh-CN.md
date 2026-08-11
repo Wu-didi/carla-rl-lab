@@ -37,12 +37,12 @@
 | --- | --- |
 | 算法 | SAC、TD3、DDPG、PPO、A2C、TD3+BC、CQL、IQL、BC、GAIL、AIRL |
 | 策略网络 | Gaussian 与确定性 Actor-Critic、语义注意力 SAC |
-| CARLA 版本 | 0.9.13 已有文档；0.9.15 代码兼容，正式验证待完成 |
-| CARLA 控制 | 油门、方向盘、刹车 |
+| CARLA 版本 | 0.9.13 已有文档；0.9.15 connection/reset/step 已验证，完整 benchmark 待完成 |
+| CARLA 控制 | 明确的 `signed_3d` 与 `longitudinal_2d` policy action space |
 | 奖励 | 原始 legacy reward、可直接修改的 `research_v1` 函数 |
 | 日志 | TensorBoard、W&B 在线/离线、reward 分项日志 |
 | Benchmark | 论文标准评测启动器与轻量内部 suite |
-| 验证 | 覆盖算法、奖励、日志和评测的 CPU 冒烟测试 |
+| 验证 | CPU 更新与回归测试；真实 CARLA 收敛验证仍待完成 |
 
 ## 明确分离的训练链路
 
@@ -245,7 +245,16 @@ python scripts/train.py --algo ddpg --checkpoint /path/to/ddpg_ckpt.pt
 # PPO / A2C 从 CARLA 收集 fresh rollout
 python scripts/train_on_policy.py --algo ppo --total-timesteps 1000000
 
-# Offline RL 使用固定的五字段 .npz transition dataset
+# 使用 CARLA Traffic Manager 采集专家数据
+python scripts/collect_dataset.py \
+  --policy autopilot \
+  --transitions 100000 \
+  --output artifacts/datasets/town05_autopilot.npz
+
+# 对运行中的 server 执行真实 connection/reset/step 冒烟
+python scripts/smoke_carla.py --port 2000 --town Town05 --steps 3
+
+# Offline RL 使用带版本和元数据的 .npz transition dataset
 python scripts/train_offline.py --algo td3_bc --dataset /path/to/transitions.npz
 python scripts/train_offline.py --algo cql --dataset /path/to/transitions.npz
 python scripts/train_offline.py --algo iql --dataset /path/to/transitions.npz
@@ -256,10 +265,25 @@ python scripts/train_imitation.py --algo gail --expert-dataset /path/to/expert.n
 python scripts/train_imitation.py --algo airl --expert-dataset /path/to/expert.npz
 ```
 
-实验输出位于 `artifacts/runs/<run-name>/`，默认不会提交到 Git。
-离线 transition dataset 是包含 `states`、`actions`、`rewards`、
-`next_states`、`dones` 的 `.npz` 文件。BC 与 GAIL 只要求前两个字段，AIRL
-要求完整 transition。
+实验输出位于 `artifacts/runs/<run-name>/`，默认不会提交到 Git。每次运行都会写入
+`run_config.json`。checkpoint 目录保存有限数量的不可变步数 checkpoint、
+`checkpoint_manifest.json` 和 `*_ckpt_last.pt` 别名。新 checkpoint 内嵌完整配置、
+Git commit、全局步数、RNG、软硬件信息与 CARLA client/server 版本；评测会自动读取
+算法和模型维度，不再盲目使用默认配置。
+
+Version 2 dataset 保存 `states`、`actions`、`rewards`、`next_states`、
+`terminals`、`timeouts`、`episode_ids`、`costs` 与 JSON 元数据。训练使用的
+`dones` 只表示真正 terminal，因此 timeout 可以正确 bootstrap。旧五字段数据仍可
+读取，但 timeout 语义会标记为未知。BC 与 GAIL 只要求 `states/actions`，AIRL 要求
+完整 transition。
+
+默认 `signed_3d` 与旧模型兼容：负油门或负刹车表示对应执行器不激活。新实验可以使用
+`longitudinal_2d`，正纵向动作为油门，负纵向动作为刹车。dataset 元数据会阻止两种
+动作表示被静默混用。
+
+```bash
+python scripts/train.py --algo sac --action-mode longitudinal_2d
+```
 
 ## 修改科研代码
 
@@ -356,10 +380,10 @@ agent 接口，以及为什么当前 lane-following checkpoint 不能直接当�
 
 | 数据来源 | 类型 | 算法 | 状态 |
 | --- | --- | --- | --- |
-| Online | Off-policy | SAC、TD3、DDPG | 已实现 |
-| Online | On-policy | PPO、A2C | 已实现 |
-| Offline | Offline RL | CQL、IQL、TD3+BC | 已实现 |
-| Expert / mixed | Imitation | BC、GAIL、AIRL | 已实现 |
+| Online | Off-policy | SAC、TD3、DDPG | 已实现 + CPU 测试 |
+| Online | On-policy | PPO、A2C | 已实现 + CPU 测试 |
+| Offline | Offline RL | CQL(H)、IQL、TD3+BC | 已实现 + CPU 测试 |
+| Expert / mixed | Imitation | BC、GAIL、AIRL | 已实现 + CPU 测试 |
 
 On-policy、offline 和 imitation 算法分别使用 rollout、dataset 和 mixed runner，
 不会强行塞入 replay-buffer 循环。
@@ -381,8 +405,10 @@ scripts/
   train_on_policy.py # 在线 rollout 主循环
   train_offline.py   # 固定 dataset 主循环
   train_imitation.py # 纯专家或专家/在线混合主循环
+  collect_dataset.py # 带版本的 random/autopilot 数据采集
+  smoke_carla.py     # 真实 server connection/reset/step 冒烟
   evaluate.py        # 轻量确定性评测入口
-  evaluate_paper.py  # 官方 Leaderboard/Bench2Drive 适配入口
+  evaluate_paper.py  # 官方 Leaderboard/Bench2Drive 预检与启动入口
   launch_carla.sh    # 已记录的 CARLA 启动命令
 tests/               # 快速 CPU 冒烟测试
 artifacts/           # 不提交的日志、checkpoint、报告
@@ -398,11 +424,12 @@ TensorBoard/W&B 和第一个固定 benchmark。后续工作按照实验可复现
 
 - [ ] 增加 CARLA 0.9.15 安装流程，下载、解压、Python API、启动和故障排查需要与
   0.9.13 教程同样详细。
-- [ ] 在实验元数据中自动记录 CARLA client/server 版本。
+- [x] 在 dataset/checkpoint 元数据中自动记录 CARLA client/server 版本。
 - [ ] 分别在 CARLA 0.9.13 和 0.9.15 执行连接、reset/step、单 episode 与
   `lane_following_v0` 验证。
 - [ ] 发布包含 Python、Ubuntu、CARLA、地图和已知限制的兼容性矩阵。当前代码已经
-  兼容 0.9.15，待完成的是正式文档和可重复验证。
+  兼容 0.9.15；已于 2026-08-12 通过本地 client/server connection、reset 和三步
+  smoke，完整训练与 benchmark 验证仍待完成。
 
 ### 2. 补全主流 RL 算法类型
 

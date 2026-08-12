@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import math
 import os
 import queue
@@ -930,19 +931,37 @@ class CarlaEnv(gym.Env):
             pass
 
     def _destroy_episode_actors(self) -> None:
-        for controller in self.walker_controllers:
+        sensors = [self.rgb_camera, self.collision_sensor]
+        controllers = list(self.walker_controllers)
+        actors = (
+            sensors
+            + controllers
+            + list(self.spawned_walkers)
+            + list(self.spawned_vehicles)
+            + [self.ego]
+        )
+        for sensor in sensors:
+            if sensor is None:
+                continue
+            try:
+                sensor.stop()
+            except (RuntimeError, AttributeError):
+                pass
+        for controller in controllers:
             try:
                 controller.stop()
-            except RuntimeError:
+            except (RuntimeError, AttributeError):
                 pass
-        for actor in (
-            [self.rgb_camera, self.collision_sensor]
-            + self.walker_controllers
-            + self.spawned_walkers
-            + self.spawned_vehicles
-            + [self.ego]
-        ):
-            self._destroy_actor(actor)
+
+        actor_ids = []
+        for actor in actors:
+            if actor is None:
+                continue
+            try:
+                actor_ids.append(actor.id)
+            except (RuntimeError, AttributeError):
+                pass
+
         self.rgb_camera = None
         self.collision_sensor = None
         self.ego = None
@@ -953,6 +972,17 @@ class CarlaEnv(gym.Env):
         self._frames.clear()
         self._latest_frame = None
         self._camera_queue = queue.Queue(maxsize=8)
+        actors.clear()
+        controllers.clear()
+        sensors.clear()
+        if actor_ids:
+            try:
+                self.client.apply_batch(
+                    [carla.command.DestroyActor(actor_id) for actor_id in actor_ids]
+                )
+            except RuntimeError:
+                pass
+        gc.collect()
 
     def close(self) -> None:
         self._destroy_episode_actors()

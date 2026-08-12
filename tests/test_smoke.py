@@ -249,6 +249,20 @@ class CoreSmokeTest(unittest.TestCase):
                 self.assertTrue(all(np.isfinite(float(value)) for value in logs.values()))
                 self._assert_checkpoint_roundtrip(name, agent, cfg)
 
+    def test_pixel_behavior_cloning(self):
+        state_dim = pixel_state_dim(32, 1, 4)
+        cfg = tiny_config(state_dim=state_dim, network="Pixel_SAC")
+        agent = create_agent("bc", cfg)
+        batch = random_batch(2, state_dim)
+        batch["states"] = np.random.randint(
+            0, 256, size=(2, state_dim), dtype=np.uint8
+        )
+        logs = agent.update(batch)
+        self.assertTrue(np.isfinite(logs["bc_loss"]))
+        self.assertEqual(
+            agent.act(np.zeros(state_dim, dtype=np.uint8)).shape, (3,)
+        )
+
     def test_offline_dataset_roundtrip(self):
         source = random_batch(6, 8)
         with tempfile.TemporaryDirectory() as directory:

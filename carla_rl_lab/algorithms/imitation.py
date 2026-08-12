@@ -12,8 +12,30 @@ from carla_rl_lab.algorithms.base import BaseAgent
 from carla_rl_lab.algorithms.common import DeterministicActor, mlp
 from carla_rl_lab.algorithms.on_policy import PpoAgent
 from carla_rl_lab.algorithms.registry import AlgorithmSpec, register_algorithm
+from carla_rl_lab.algorithms.sac import make_encoder
 from carla_rl_lab.buffers import generalized_advantage_estimate
 from carla_rl_lab.utils.checkpoint import torch_load
+
+
+class PixelBcActor(nn.Module):
+    """Deterministic actor sharing the pixel representation used by SAC."""
+
+    def __init__(self, cfg: Any) -> None:
+        super().__init__()
+        self.encoder = make_encoder(
+            cfg.state_dim,
+            cfg.hidden_dim,
+            cfg.network,
+            cfg.image_size,
+            cfg.frame_stack,
+            cfg.max_waypoints,
+        )
+        self.fc_mu = nn.Linear(self.encoder.output_dim, cfg.action_dim)
+        self.action_bound = float(cfg.action_bound)
+
+    def forward(self, states: torch.Tensor) -> torch.Tensor:
+        features, _ = self.encoder(states)
+        return torch.tanh(self.fc_mu(features)) * self.action_bound
 
 
 class BcAgent(BaseAgent):
@@ -22,11 +44,15 @@ class BcAgent(BaseAgent):
     def __init__(self, cfg: Any) -> None:
         self.cfg = cfg
         self.device = torch.device(cfg.device)
-        self.actor = DeterministicActor(
-            cfg.state_dim,
-            cfg.hidden_dim,
-            cfg.action_dim,
-            cfg.action_bound,
+        self.actor = (
+            PixelBcActor(cfg)
+            if str(cfg.network).lower() in ("pixel_sac", "pixel")
+            else DeterministicActor(
+                cfg.state_dim,
+                cfg.hidden_dim,
+                cfg.action_dim,
+                cfg.action_bound,
+            )
         ).to(self.device)
         self.optimizer = torch.optim.Adam(self.actor.parameters(), lr=cfg.actor_lr)
         self.update_step = 0

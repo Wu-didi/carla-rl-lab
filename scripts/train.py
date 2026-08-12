@@ -175,6 +175,7 @@ def train(cfg: Config) -> None:
             episode_steps = 0
             episode_actions = []
             consecutive_step_failures = 0
+            info: Dict[str, Any] = {}
 
             while not done and global_step < cfg.total_timesteps:
                 obs_vector = encode_observation(obs, cfg.state_dim)
@@ -243,6 +244,23 @@ def train(cfg: Config) -> None:
                     "episode/length": float(episode_steps),
                     "episode/index": float(episode),
                     "episode/truncated_by_budget": float(not done),
+                    "traffic/requested_vehicles": float(
+                        info.get("requested_vehicles", 0)
+                    ),
+                    "traffic/spawned_vehicles": float(
+                        info.get("spawned_vehicles", 0)
+                    ),
+                    "traffic/requested_walkers": float(
+                        info.get("requested_walkers", 0)
+                    ),
+                    "traffic/spawned_walkers": float(
+                        info.get("spawned_walkers", 0)
+                    ),
+                    "events/collisions": float(info.get("collision_count", 0)),
+                    "events/red_lights": float(info.get("red_light_count", 0)),
+                    "episode/route_completion": float(
+                        info.get("route_completion", 0.0)
+                    ),
                 },
                 global_step,
             )

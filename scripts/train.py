@@ -48,6 +48,15 @@ def make_agent(cfg: Config):
     return create_agent(cfg.algorithm, cfg)
 
 
+def select_action(agent: Any, cfg: Config, obs_vector: np.ndarray, replay_size: int):
+    if replay_size < cfg.minimal_size:
+        action = np.random.uniform(
+            -cfg.action_bound, cfg.action_bound, size=cfg.action_dim
+        )
+        return action.astype(np.float32), True
+    return agent.act(obs_vector), False
+
+
 def off_policy_algorithms():
     return [
         name for name in list_algorithms()
@@ -174,12 +183,16 @@ def train(cfg: Config) -> None:
             episode_cost = 0.0
             episode_steps = 0
             episode_actions = []
+            episode_random_actions = 0
             consecutive_step_failures = 0
             info: Dict[str, Any] = {}
 
             while not done and global_step < cfg.total_timesteps:
                 obs_vector = encode_observation(obs, cfg.state_dim)
-                action = agent.act(obs_vector)
+                action, random_warmup = select_action(
+                    agent, cfg, obs_vector, replay_buffer.size()
+                )
+                episode_random_actions += int(random_warmup)
 
                 try:
                     next_obs, reward, cost, done, info = env.step(action)
@@ -261,6 +274,10 @@ def train(cfg: Config) -> None:
                     "episode/route_completion": float(
                         info.get("route_completion", 0.0)
                     ),
+                    "exploration/random_warmup_rate": float(
+                        episode_random_actions
+                    )
+                    / max(episode_steps, 1),
                 },
                 global_step,
             )

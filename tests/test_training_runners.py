@@ -70,6 +70,25 @@ class FakeLogger:
 
 
 class TrainingRunnerTest(unittest.TestCase):
+    def test_off_policy_warmup_samples_full_action_space(self):
+        cfg = Config()
+        cfg.action_dim = 2
+        cfg.minimal_size = 10
+        agent = FakeAgent()
+        action, random_warmup = off_policy_runner.select_action(
+            agent, cfg, np.zeros(cfg.state_dim, dtype=np.uint8), replay_size=0
+        )
+        self.assertTrue(random_warmup)
+        self.assertEqual(action.shape, (2,))
+        self.assertTrue(np.all(action >= -1.0))
+        self.assertTrue(np.all(action <= 1.0))
+
+        action, random_warmup = off_policy_runner.select_action(
+            agent, cfg, np.zeros(cfg.state_dim, dtype=np.uint8), replay_size=10
+        )
+        self.assertFalse(random_warmup)
+        self.assertTrue(np.array_equal(action, np.zeros(2, dtype=np.float32)))
+
     def test_off_policy_cli_overrides_research_budget(self):
         args = off_policy_runner.build_argparser().parse_args(
             [

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import os
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import carla
+import networkx as nx
 
 
 NOCRASH_TRAIN_WEATHERS = (
@@ -72,3 +73,49 @@ def load_nocrash_routes(
     if not routes:
         raise ValueError("No routes found in {}".format(route_path))
     return routes
+
+
+def trace_route_compat(
+    planner: Any, origin: carla.Location, destination: carla.Location
+) -> List[Tuple[Any, Any]]:
+    """Trace a route, including CARLA's same-edge wraparound corner case.
+
+    CARLA 0.9.15 returns a one-waypoint route when origin and destination are
+    on the same graph edge but the destination lies behind the origin. In that
+    case the valid route must finish the edge, traverse the shortest directed
+    cycle, and re-enter the edge from its beginning.
+    """
+
+    route = planner.trace_route(origin, destination)
+    if len(route) >= 2:
+        return route
+
+    start_edge = planner._localize(origin)
+    end_edge = planner._localize(destination)
+    if start_edge is None or end_edge is None or start_edge != end_edge:
+        return route
+
+    cycle = nx.astar_path(
+        planner._graph,
+        source=start_edge[1],
+        target=end_edge[0],
+        heuristic=planner._distance_heuristic,
+        weight="length",
+    )
+    try:
+        from agents.navigation.local_planner import RoadOption
+    except ImportError as exc:
+        raise ImportError(
+            "CARLA navigation agents are missing. Add "
+            "$CARLA_ROOT/PythonAPI/carla to PYTHONPATH."
+        ) from exc
+    node_route = [start_edge[0]] + cycle + [end_edge[1]]
+    original_path_search = planner._path_search
+    planner._path_search = lambda _origin, _destination: node_route
+    planner._previous_decision = RoadOption.VOID
+    planner._intersection_end_node = -1
+    try:
+        wrapped_route = planner.trace_route(origin, destination)
+    finally:
+        planner._path_search = original_path_search
+    return wrapped_route

@@ -18,6 +18,15 @@ _BASE_OVERRIDES = {
     "weather": "ClearNoon",
 }
 
+_RLFOLD_MODEL_IMAGE_SIZE = 84
+_RLFOLD_FRAME_STACK = 2
+_RLFOLD_NUM_WAYPOINTS = 10
+_RLFOLD_STATE_DIM = (
+    3 * _RLFOLD_FRAME_STACK * _RLFOLD_MODEL_IMAGE_SIZE ** 2
+    + 2 * _RLFOLD_NUM_WAYPOINTS
+    + 2
+)
+
 
 def _nocrash_benchmark(
     name: str,
@@ -27,22 +36,40 @@ def _nocrash_benchmark(
     walkers: int,
     weather_group: str,
     route_mode: str,
+    vehicle_range: Tuple[int, int] = (-1, -1),
+    walker_range: Tuple[int, int] = (-1, -1),
 ) -> Dict[str, Any]:
     training = town == "Town01"
+    fixed_routes = route_mode == "fixed"
     return {
         "name": name,
         "description": (
-            "CARLA 0.9.15 adaptation of NoCrash {} traffic in {}."
+            "RLfOLD NoCrash CARLA 0.9.15 adaptation with {} traffic in {}."
         ).format(traffic_density, town),
         "category": "nocrash",
+        "protocol_id": "rlfold_nocrash_0915_v0",
+        "reference": {
+            "project": "RLfOLD",
+            "original_carla_version": "0.9.10.1",
+            "adaptation_carla_version": "0.9.15",
+        },
+        "observation_profile": {
+            "name": "rlfold_front_rgb_84_v0",
+            "source": "front_rgb_256x256",
+            "model_input": "front_rgb_84x84",
+            "frame_stack": _RLFOLD_FRAME_STACK,
+            "route_waypoints": _RLFOLD_NUM_WAYPOINTS,
+            "measurements": ("normalized_speed", "previous_steer"),
+        },
         "seeds": (0,),
         "success_reasons": ("route_completed",),
         "success_criteria": {
             "min_horizon_fraction": 0.0,
             "min_distance_m": 0.0,
-            "max_stationary_rate": 0.5,
+            "max_stationary_rate": 1.0,
+            "require_zero_collisions": fixed_routes,
         },
-        "route_ids": tuple(range(25)),
+        "route_ids": tuple(range(25)) if fixed_routes else (),
         "weather_presets": (
             ("ClearNoon", "WetNoon", "HardRainNoon", "ClearSunset")
             if training
@@ -53,6 +80,10 @@ def _nocrash_benchmark(
             "town": town,
             "number_of_vehicles": vehicles,
             "number_of_walkers": walkers,
+            "min_number_of_vehicles": vehicle_range[0],
+            "max_number_of_vehicles": vehicle_range[1],
+            "min_number_of_walkers": walker_range[0],
+            "max_number_of_walkers": walker_range[1],
             "traffic": "on",
             "max_time_episode": 1200,
             "desired_speed": 5.0,
@@ -60,12 +91,23 @@ def _nocrash_benchmark(
             "visualize_waypoints": False,
             "reward_profile": "nocrash_v0",
             "weather_group": weather_group,
-            "route_file": bundled_route_file(town),
+            "route_file": bundled_route_file(town) if fixed_routes else "",
             "route_id": -1,
             "route_mode": route_mode,
             "action_mode": "target_speed_2d",
             "action_dim": 2,
             "observation_mode": "pixel_v1",
+            "camera_layout": "front",
+            "num_cameras": 1,
+            "camera_sensor_width": 256,
+            "camera_sensor_height": 256,
+            "camera_fov": 90.0,
+            "camera_location_x": 1.5,
+            "camera_location_z": 2.4,
+            "image_size": _RLFOLD_MODEL_IMAGE_SIZE,
+            "frame_stack": _RLFOLD_FRAME_STACK,
+            "max_waypoints": _RLFOLD_NUM_WAYPOINTS,
+            "state_dim": _RLFOLD_STATE_DIM,
         },
     }
 
@@ -114,6 +156,17 @@ _BENCHMARKS = {
     ),
     "nocrash_train_v0": _nocrash_benchmark(
         "nocrash_train_v0",
+        "Town01",
+        "variable",
+        0,
+        0,
+        "nocrash_train",
+        "endless",
+        vehicle_range=(0, 150),
+        walker_range=(0, 300),
+    ),
+    "nocrash_train_regular_v0": _nocrash_benchmark(
+        "nocrash_train_regular_v0",
         "Town01",
         "regular",
         20,
@@ -207,6 +260,11 @@ _BENCHMARK_SUITES = {
         "nocrash_regular_v0",
         "nocrash_dense_v0",
     ),
+    "rlfold_nocrash_0915_v0": (
+        "nocrash_empty_v0",
+        "nocrash_regular_v0",
+        "nocrash_dense_v0",
+    ),
 }
 
 
@@ -241,6 +299,8 @@ def get_benchmark_suite(name: str) -> Tuple[str, ...]:
 
 
 def apply_benchmark(cfg: Any, benchmark: Dict[str, Any]) -> Any:
+    if hasattr(cfg, "benchmark_name"):
+        cfg.benchmark_name = benchmark["name"]
     for key, value in benchmark["env_overrides"].items():
         if not hasattr(cfg, key):
             raise AttributeError(

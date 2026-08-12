@@ -54,40 +54,44 @@ already been produced; published baselines require the fixed protocol below.
 
 ## Observation And Control
 
-The default `pixel_v1` observation follows the policy-input pattern used by
+The `pixel_v1` observation follows the policy-input pattern used by
 [RLAD](https://arxiv.org/abs/2305.18510) and
 [RLfOLD](https://ojs.aaai.org/index.php/AAAI/article/view/29049):
 
 ```text
-front RGB:            3 frames x 3 x 84 x 84, uint8
+front RGB:            2 frames x 3 x 84 x 84, uint8 (RLfOLD profile)
 route:                10 ego-frame (x, y) waypoints
 vehicle measurements: normalized speed + previous steering
-packed replay state:  63,526 uint8 values
+packed replay state:  42,358 uint8 values
 action:               target speed + steering, both in [-1, 1]
 low-level control:    target speed -> throttle/brake PID
 ```
 
 Global pose, lane measurements, nearby actor state, LiDAR, and risk fields are
 not policy inputs. They may be used by the environment to calculate reward,
-termination, or evaluation metrics. The practical default uses `84x84` images;
+termination, or evaluation metrics. The RLfOLD benchmark profile uses one
+front RGB sensor at the official `(x=1.5 m, z=2.4 m)` position and 90-degree
+field of view. CARLA renders `256x256`; the lightweight baseline resizes it to
+`84x84` before the policy.
 RLAD used `256x256`, CARLA 0.9.10.1, and a different training budget, so results
 from this CARLA 0.9.15 adaptation must not be presented as protocol-equivalent
 RLAD numbers. See [Observation Contract](docs/observations.md).
 
 ## NoCrash 0.9.15
 
-The bundled `nocrash_0915_v0` suite ports the fixed routes and evaluation grid
-used by RLAD/RLfOLD to the CARLA 0.9.15 API:
+The primary `rlfold_nocrash_0915_v0` suite ports RLfOLD's NoCrash task protocol
+to the CARLA 0.9.15 API. `nocrash_0915_v0` remains a compatibility alias.
 
 | Split | Town | Vehicles / walkers | Weather | Episodes |
 | --- | --- | ---: | --- | ---: |
-| Train | Town01 | empty or 20 / 50 | 4 training weathers | endless route sampling |
+| Train | Town01 | sampled 0-150 / 0-300 | 4 training weathers | endless route sampling |
 | Empty | Town02 | 0 / 0 | 2 held-out weathers | 25 routes x 2 = 50 |
 | Regular | Town02 | 15 / 50 | 2 held-out weathers | 50 |
 | Dense | Town02 | 70 / 150 | 2 held-out weathers | 50 |
 
-Success means route completion without collision, lane departure, red-light
-termination, or blockage. Reports include success, route completion, return,
+Success means route completion without collision. Lane departure, wrong-way
+driving, blockage, and timeout terminate unsuccessfully; red lights are counted
+without ending a fixed evaluation route. Reports include route completion, return,
 speed, collision categories, red lights, blockage, and infractions per km. The
 red-light detector is a documented CARLA 0.9.15 approximation; this suite is
 therefore named as an adaptation, not as the legacy CARLA 0.8 NoCrash runner.
@@ -229,7 +233,8 @@ python scripts/smoke_carla.py \
 ```
 
 The smoke command must print matching CARLA client/server versions, a
-`state_dim` of `63526`, non-zero image statistics, and ten successful steps.
+`state_dim` of `42358`, `num_cameras` of `1`, non-zero front-image statistics,
+and ten successful steps.
 
 ## Train Pixel SAC
 
@@ -247,7 +252,9 @@ python scripts/train.py \
   --seed 0
 ```
 
-Use `--benchmark nocrash_train_v0` for the Town01 regular-traffic setting.
+Use `--benchmark nocrash_train_v0` for RLfOLD's Town01 traffic distribution
+(uniformly sampled 0-150 vehicles and 0-300 walkers per episode). The fixed
+20/50 curriculum is available as `nocrash_train_regular_v0`.
 Resume by passing the last checkpoint and a larger absolute step budget:
 
 ```bash
@@ -256,9 +263,9 @@ python scripts/train.py \
   --total-timesteps 200000
 ```
 
-Each packed transition contains two `63,526`-byte observations. A 30,000-entry
-replay buffer therefore needs roughly 3.8 GB for states alone; size it for your
-machine instead of copying a large-paper setting blindly.
+Each packed transition contains two `42,358`-byte observations. A 30,000-entry
+replay buffer therefore needs roughly 2.5 GB for observations; size it for your
+machine.
 
 ## Evaluate On The Same Protocol
 
@@ -276,7 +283,7 @@ Then run all 150 Town02 episodes under the three traffic densities:
 ```bash
 python scripts/evaluate.py \
   --checkpoint /path/to/sac_ckpt_last.pt \
-  --suite nocrash_0915_v0 \
+  --suite rlfold_nocrash_0915_v0 \
   --logger tensorboard
 ```
 

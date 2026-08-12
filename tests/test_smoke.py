@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import queue
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -22,6 +23,7 @@ from carla_rl_lab.benchmarks import (
 )
 from carla_rl_lab.buffers import OfflineDataset, ReplayBuffer, RolloutBuffer
 from carla_rl_lab.config import Config
+from carla_rl_lab.envs.carla_env import CarlaEnv, _count_range
 from carla_rl_lab.evaluation import evaluate_benchmark, summarize_suite
 from carla_rl_lab.logging import ExperimentLogger
 from carla_rl_lab.observations import encode_observation, pixel_state_dim
@@ -119,6 +121,22 @@ class FakeEnv:
         obs["ego_state"][3] = 1.0
         obs["lane_info"][1] = 0.2
         return obs, 1.0, 0.25, done, info
+
+
+class FixedCollisionEnv(FakeEnv):
+    def step(self, action):
+        self.step_count += 1
+        done = self.step_count == 2
+        info = {
+            "termination_reason": "route_completed" if done else None,
+            "route_completion": float(done),
+            "collision_count": 1,
+            "collision_counts": {"layout": 0, "vehicle": 1, "pedestrian": 0},
+        }
+        obs = pixel_observation()
+        obs["ego_state"][0] = float(self.step_count)
+        obs["ego_state"][3] = 1.0
+        return obs, 1.0, 0.0, done, info
 
 
 class CoreSmokeTest(unittest.TestCase):
@@ -272,6 +290,42 @@ class CoreSmokeTest(unittest.TestCase):
         logs = agent.update(batch)
         self.assertTrue(np.isfinite(logs["critic_1_loss"]))
 
+    def test_default_front_camera_contract(self):
+        cfg = Config()
+        self.assertEqual(cfg.camera_layout, "front")
+        self.assertEqual(cfg.num_cameras, 1)
+        self.assertEqual(cfg.camera_sensor_width, 640)
+        self.assertEqual(cfg.camera_sensor_height, 384)
+        self.assertEqual(cfg.camera_fov, 120.0)
+        self.assertEqual(cfg.camera_location_x, 1.5)
+        self.assertEqual(cfg.camera_location_z, 2.5)
+        self.assertEqual(
+            cfg.state_dim,
+            pixel_state_dim(
+                cfg.image_size,
+                cfg.frame_stack,
+                cfg.max_waypoints,
+            ),
+        )
+
+    def test_bench2drive_rl_camera_frame_is_resized_for_pixel_policy(self):
+        env = CarlaEnv.__new__(CarlaEnv)
+        env.image_size = 84
+        env._camera_queue = queue.Queue(maxsize=8)
+        bgra = np.zeros((384, 640, 4), dtype=np.uint8)
+        bgra[:, :, 2] = 255
+        image = SimpleNamespace(
+            raw_data=bgra.tobytes(), height=384, width=640, frame=7
+        )
+
+        env._on_camera(image)
+        frame, rgb = env._camera_queue.get_nowait()
+
+        self.assertEqual(frame, 7)
+        self.assertEqual(rgb.shape, (3, 84, 84))
+        self.assertEqual(rgb.dtype, np.uint8)
+        self.assertTrue(np.all(rgb[0] == 255))
+
     def test_observation_and_replay_buffer(self):
         expected_dim = pixel_state_dim(8, 1, 2)
         encoded = encode_observation(
@@ -332,6 +386,7 @@ class CoreSmokeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as log_dir:
             logger = ExperimentLogger("tensorboard", log_dir, {"algorithm": "sac"})
             logger.log({"train/loss": 1.0}, step=0)
+            logger.finish("completed", global_step=1)
             logger.close()
             self.assertTrue(any(name.startswith("events.out.tfevents") for name in os.listdir(log_dir)))
             self.assertTrue(os.path.isfile(os.path.join(log_dir, "run_config.json")))
@@ -348,6 +403,7 @@ class CoreSmokeTest(unittest.TestCase):
                 "nocrash_empty_v0",
                 "nocrash_regular_v0",
                 "nocrash_train_empty_v0",
+                "nocrash_train_regular_v0",
                 "nocrash_train_v0",
                 "town02_generalization_v0",
                 "urban_traffic_v0",
@@ -355,7 +411,12 @@ class CoreSmokeTest(unittest.TestCase):
         )
         self.assertEqual(
             list_benchmark_suites(),
-            ("carla_common_v0", "carla_lightweight_v0", "nocrash_0915_v0"),
+            (
+                "carla_common_v0",
+                "carla_lightweight_v0",
+                "nocrash_0915_v0",
+                "rlfold_nocrash_0915_v0",
+            ),
         )
         self.assertEqual(len(get_benchmark_suite("carla_common_v0")), 5)
         self.assertEqual(
@@ -384,6 +445,42 @@ class CoreSmokeTest(unittest.TestCase):
         self.assertEqual(env.seed_calls, [0, 1])
         suite_summary = summarize_suite({"first": report, "second": report})
         self.assertEqual(suite_summary["suite/success_rate"], 0.0)
+
+    def test_rlfold_protocol_uses_front_rgb_and_nocrash_success(self):
+        train_spec = get_benchmark("nocrash_train_v0")
+        train_cfg = apply_benchmark(Config(), train_spec)
+        self.assertEqual(train_spec["protocol_id"], "rlfold_nocrash_0915_v0")
+        self.assertEqual(train_cfg.town, "Town01")
+        self.assertEqual(train_cfg.route_mode, "endless")
+        self.assertEqual(train_cfg.camera_layout, "front")
+        self.assertEqual(train_cfg.num_cameras, 1)
+        self.assertEqual(train_cfg.camera_sensor_width, 256)
+        self.assertEqual(train_cfg.image_size, 84)
+        self.assertEqual(train_cfg.frame_stack, 2)
+        self.assertEqual(train_cfg.min_number_of_vehicles, 0)
+        self.assertEqual(train_cfg.max_number_of_vehicles, 150)
+        self.assertEqual(train_cfg.min_number_of_walkers, 0)
+        self.assertEqual(train_cfg.max_number_of_walkers, 300)
+
+        env = FixedCollisionEnv()
+        report = evaluate_benchmark(
+            "nocrash_empty_v0",
+            env,
+            FakeAgent(),
+            seeds=(0,),
+            expected_dim=pixel_state_dim(8, 1, 2),
+            route_limit=2,
+            weather_limit=1,
+        )
+        self.assertEqual(env.seed_calls, [0, 1])
+        self.assertEqual(report["summary"]["benchmark/collision_rate"], 1.0)
+        self.assertEqual(report["summary"]["benchmark/success_rate"], 0.0)
+
+    def test_traffic_count_range_validation(self):
+        self.assertEqual(_count_range(20, -1, -1), (20, 20))
+        self.assertEqual(_count_range(0, 0, 150), (0, 150))
+        with self.assertRaisesRegex(ValueError, "minimum"):
+            _count_range(0, 10, 5)
 
     def test_paper_benchmark_registry_and_preflight(self):
         self.assertIn("town05_long", list_paper_benchmarks())

@@ -43,7 +43,8 @@ def run_smoke(cfg: Config, steps: int, frame_output: str = "") -> None:
             termination_reason = info.get("termination_reason")
             if done:
                 break
-        current_rgb = observation["image"][-3:]
+        front_offset = 3 * cfg.num_cameras * (cfg.frame_stack - 1)
+        current_rgb = observation["image"][front_offset : front_offset + 3]
         if frame_output:
             output_path = os.path.abspath(frame_output)
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -56,6 +57,8 @@ def run_smoke(cfg: Config, steps: int, frame_output: str = "") -> None:
             "town": cfg.town,
             "seed": cfg.seed,
             "state_dim": int(state.shape[0]),
+            "camera_layout": cfg.camera_layout,
+            "num_cameras": cfg.num_cameras,
             "action_mode": cfg.action_mode,
             "steps": completed_steps,
             "return": total_reward,

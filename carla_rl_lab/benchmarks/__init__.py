@@ -14,7 +14,11 @@ from carla_rl_lab.benchmarks.paper import (
     prepare_paper_benchmark,
     probe_paper_benchmark,
 )
-from carla_rl_lab.benchmarks.nocrash import bundled_route_file, load_nocrash_routes
+from carla_rl_lab.benchmarks.nocrash import (
+    bundled_route_file,
+    load_nocrash_routes,
+    trace_route_compat,
+)
 
 __all__ = [
     "apply_benchmark",
@@ -31,4 +35,5 @@ __all__ = [
     "probe_paper_benchmark",
     "bundled_route_file",
     "load_nocrash_routes",
+    "trace_route_compat",
 ]

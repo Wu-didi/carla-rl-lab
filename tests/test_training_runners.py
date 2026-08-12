@@ -49,11 +49,21 @@ class FailingEnv(FakeEnv):
 
 
 class FakeLogger:
+    def __init__(self):
+        self.run_record = {}
+
     def log(self, metrics, step):
         pass
 
     def log_image(self, name, image, step):
         pass
+
+    def update_run_record(self, values):
+        self.run_record.update(values)
+
+    def finish(self, status, **details):
+        self.run_record.update(details)
+        self.run_record["status"] = status
 
     def close(self):
         pass

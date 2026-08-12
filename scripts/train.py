@@ -26,7 +26,7 @@ from carla_rl_lab.utils import (
     save_training_checkpoint,
     set_seed,
 )
-from carla_rl_lab.utils.provenance import carla_versions
+from carla_rl_lab.utils.provenance import carla_versions, git_is_dirty
 
 
 def project_root() -> str:
@@ -119,6 +119,10 @@ def train(cfg: Config) -> None:
         raise ValueError("checkpoint_interval must be positive")
     if cfg.max_step_retries <= 0:
         raise ValueError("max_step_retries must be positive")
+    if cfg.require_clean_git and git_is_dirty(project_root()):
+        raise RuntimeError(
+            "Public runs require a clean git worktree; commit or stash changes first"
+        )
     set_seed(cfg.seed)
     log_dir = runs_dir(cfg)
     os.makedirs(log_dir, exist_ok=True)
@@ -126,11 +130,15 @@ def train(cfg: Config) -> None:
     print("Experiment logs -> {} ({})".format(log_dir, cfg.logger_backend))
 
     env = None
+    global_step = 0
+    last_episode = -1
     try:
         env = make_carla_env(cfg)
+        logger.update_run_record(
+            {"status": "running", "carla_versions": carla_versions(env)}
+        )
         agent = make_agent(cfg)
         replay_buffer = ReplayBuffer(cfg.buffer_size)
-        global_step = 0
         start_episode = 0
 
         if cfg.use_pretrained_model:
@@ -254,6 +262,18 @@ def train(cfg: Config) -> None:
                 env,
                 replay_buffer,
             )
+        logger.finish(
+            "completed", global_step=global_step, last_episode=last_episode
+        )
+    except BaseException as exc:
+        logger.finish(
+            "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed",
+            global_step=global_step,
+            last_episode=last_episode,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        raise
     finally:
         if env is not None:
             try:
@@ -333,6 +353,12 @@ def build_argparser() -> argparse.ArgumentParser:
         default=None,
         help="Store replay data in checkpoints for exact online resume",
     )
+    parser.add_argument(
+        "--require-clean-git",
+        action="store_true",
+        default=None,
+        help="Refuse to start when the git worktree has uncommitted changes",
+    )
     return parser
 
 
@@ -372,6 +398,7 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         "run_name",
         "wandb_mode",
         "checkpoint_replay_buffer",
+        "require_clean_git",
     ):
         value = getattr(args, name)
         if value is not None:

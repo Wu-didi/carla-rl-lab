@@ -4,7 +4,7 @@ CarlaRLLab separates locally runnable RL protocols from external CARLA
 Leaderboard protocols. A local route-completion result is never renamed as a
 Leaderboard driving score.
 
-## Primary: `nocrash_0915_v0`
+## Primary: `rlfold_nocrash_0915_v0`
 
 This suite adapts the NoCrash route grid used by RLAD/RLfOLD to CARLA 0.9.15.
 The original endpoint pairs are bundled under
@@ -15,12 +15,13 @@ The original endpoint pairs are bundled under
 | Name | Town | Traffic | Weather | Route mode |
 | --- | --- | --- | --- | --- |
 | `nocrash_train_empty_v0` | Town01 | 0 vehicles, 0 walkers | 4 train weathers | endless sampling |
-| `nocrash_train_v0` | Town01 | 20 vehicles, 50 walkers | 4 train weathers | endless sampling |
+| `nocrash_train_regular_v0` | Town01 | 20 vehicles, 50 walkers | 4 train weathers | endless sampling |
+| `nocrash_train_v0` | Town01 | uniform 0-150 vehicles, 0-300 walkers per episode | 4 train weathers | endless sampling |
 
-The empty setting is a curriculum and integration target. The regular setting
-is the fixed primary training configuration. Training selects among 25 route
-endpoint pairs and uses `ClearNoon`, `WetNoon`, `HardRainNoon`, and
-`ClearSunset`.
+The empty and fixed regular settings are curriculum and integration targets.
+`nocrash_train_v0` is the RLfOLD training distribution. It samples distant
+Town01 spawn points continuously and uses `ClearNoon`, `WetNoon`,
+`HardRainNoon`, and `ClearSunset`.
 
 ### Evaluation
 
@@ -36,7 +37,7 @@ episodes:
 ```bash
 python scripts/evaluate.py \
   --checkpoint /path/to/sac_ckpt_last.pt \
-  --suite nocrash_0915_v0
+  --suite rlfold_nocrash_0915_v0
 ```
 
 Use `--routes 1 --weathers 1` only for a quick integration check. Results from
@@ -44,9 +45,10 @@ a limited grid must be labeled as smoke or pilot results.
 
 ### Success And Metrics
 
-An episode succeeds only when its destination is reached. Collision, lane
-departure, wrong-way driving, red-light infraction, blockage, and timeout are
-failures. The report stores per-episode route ID, weather, return, cost, route
+An episode succeeds only when its destination is reached with zero collisions.
+Lane departure, wrong-way driving, blockage, and timeout terminate as failures.
+Red-light infractions are recorded without terminating the fixed route. The
+report stores per-episode route ID, weather, return, cost, route
 completion, distance, speed, lane offset, collision category, termination
 reason, and success.
 
@@ -65,7 +67,7 @@ the original CARLA 0.8 NoCrash table or to RLAD's CARLA 0.9.10.1 table.
 `carla_lightweight_v0` retains earlier Town03/Town05 fixed-horizon checks for
 regression testing. It is not the primary pixel research protocol and does not
 measure route-completion generalization. New algorithm comparisons should use
-`nocrash_0915_v0`.
+`rlfold_nocrash_0915_v0` (`nocrash_0915_v0` is a compatibility alias).
 
 ## External Paper Evaluators
 

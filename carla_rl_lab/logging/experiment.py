@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from typing import Any, Dict, Optional
 
-from carla_rl_lab.utils.provenance import git_commit, utc_timestamp
+from carla_rl_lab.utils.provenance import (
+    git_commit,
+    git_is_dirty,
+    runtime_environment,
+    utc_timestamp,
+)
 
 
 class ExperimentLogger:
@@ -22,14 +28,19 @@ class ExperimentLogger:
         wandb_mode: str = "offline",
     ):
         os.makedirs(log_dir, exist_ok=True)
-        _write_json(
-            os.path.join(log_dir, "run_config.json"),
-            {
-                "created_at": utc_timestamp(),
-                "git_commit": git_commit(),
-                "config": config,
-            },
-        )
+        self.run_record_path = os.path.join(log_dir, "run_config.json")
+        self.run_record = {
+            "schema_version": 2,
+            "status": "created",
+            "created_at": utc_timestamp(),
+            "git_commit": git_commit(),
+            "git_dirty": git_is_dirty(),
+            "command": list(sys.argv),
+            "cwd": os.getcwd(),
+            "runtime": runtime_environment(),
+            "config": config,
+        }
+        _write_json(self.run_record_path, self.run_record)
         self.writer = None
         self.wandb = None
         self.wandb_run = None
@@ -75,6 +86,17 @@ class ExperimentLogger:
             self.writer.add_image(name, image, global_step=step)
         if self.wandb_run is not None:
             self.wandb_run.log({name: self.wandb.Image(image)}, step=step)
+
+    def update_run_record(self, values: Dict[str, Any]) -> None:
+        self.run_record.update(values)
+        self.run_record["updated_at"] = utc_timestamp()
+        _write_json(self.run_record_path, self.run_record)
+
+    def finish(self, status: str, **details: Any) -> None:
+        payload = dict(details)
+        payload["status"] = status
+        payload["finished_at"] = utc_timestamp()
+        self.update_run_record(payload)
 
     def close(self) -> None:
         if self.writer is not None:

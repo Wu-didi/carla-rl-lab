@@ -10,12 +10,17 @@ from collections import deque
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import carla
+import cv2
 import gym
 import numpy as np
 from gym import spaces
 from gym.utils import seeding
 
-from carla_rl_lab.benchmarks.nocrash import load_nocrash_routes, weather_presets
+from carla_rl_lab.benchmarks.nocrash import (
+    load_nocrash_routes,
+    trace_route_compat,
+    weather_presets,
+)
 from carla_rl_lab.envs.control import (
     TARGET_SPEED_2D,
     carla_action_to_policy,
@@ -23,6 +28,14 @@ from carla_rl_lab.envs.control import (
     validate_action_spec,
 )
 from carla_rl_lab.observations import pixel_state_dim
+
+
+def _count_range(fixed: int, minimum: int, maximum: int) -> Tuple[int, int]:
+    if minimum < 0 and maximum < 0:
+        return int(fixed), int(fixed)
+    if minimum < 0 or maximum < 0 or minimum > maximum:
+        raise ValueError("traffic ranges require 0 <= minimum <= maximum")
+    return int(minimum), int(maximum)
 
 
 class CarlaEnv(gym.Env):
@@ -36,6 +49,18 @@ class CarlaEnv(gym.Env):
         self.params = params
         self.number_of_vehicles = int(params["number_of_vehicles"])
         self.number_of_walkers = int(params["number_of_walkers"])
+        self._vehicle_count_range = _count_range(
+            self.number_of_vehicles,
+            int(params.get("min_number_of_vehicles", -1)),
+            int(params.get("max_number_of_vehicles", -1)),
+        )
+        self._walker_count_range = _count_range(
+            self.number_of_walkers,
+            int(params.get("min_number_of_walkers", -1)),
+            int(params.get("max_number_of_walkers", -1)),
+        )
+        self._episode_number_of_vehicles = self.number_of_vehicles
+        self._episode_number_of_walkers = self.number_of_walkers
         self.dt = float(params["dt"])
         self.max_time_episode = int(params["max_time_episode"])
         self.max_waypoints = int(params["max_waypoints"])
@@ -47,6 +72,14 @@ class CarlaEnv(gym.Env):
         self.weather_group = str(params.get("weather_group", "fixed"))
         self.image_size = int(params.get("image_size", 84))
         self.frame_stack = int(params.get("frame_stack", 3))
+        self.camera_layout = str(params.get("camera_layout", "front"))
+        self.num_cameras = int(params.get("num_cameras", 1))
+        self.camera_sensor_width = int(
+            params.get("camera_sensor_width", self.image_size)
+        )
+        self.camera_sensor_height = int(
+            params.get("camera_sensor_height", self.image_size)
+        )
         self.camera_fov = float(params.get("camera_fov", 90.0))
         self.route_lookahead_m = float(params.get("route_lookahead_m", 25.0))
         self.route_sampling_resolution = float(
@@ -61,7 +94,7 @@ class CarlaEnv(gym.Env):
         self.action_bound = float(params.get("action_bound", 1.0))
         self.action_mode = str(params.get("action_mode", TARGET_SPEED_2D))
         self.max_walker_spawn_attempts = max(
-            self.number_of_walkers,
+            self._walker_count_range[1],
             int(params.get("max_walker_spawn_attempts", 200)),
         )
         if params.get("observation_mode", "pixel_v1") != "pixel_v1":
@@ -70,8 +103,17 @@ class CarlaEnv(gym.Env):
             raise ValueError("route_mode must be 'endless' or 'fixed'")
         validate_action_spec(self.action_mode, self.action_dim)
 
+        if self.camera_layout != "front" or self.num_cameras != 1:
+            raise ValueError(
+                "pixel_v1 supports camera_layout='front' and num_cameras=1"
+            )
+        if self.camera_sensor_width <= 0 or self.camera_sensor_height <= 0:
+            raise ValueError("camera sensor dimensions must be positive")
+
         encoded_dim = pixel_state_dim(
-            self.image_size, self.frame_stack, self.max_waypoints
+            self.image_size,
+            self.frame_stack,
+            self.max_waypoints,
         )
         self.state_dim = int(params.get("state_dim", encoded_dim))
         if self.state_dim != encoded_dim:
@@ -142,7 +184,7 @@ class CarlaEnv(gym.Env):
         self._camera_transform = carla.Transform(
             carla.Location(
                 x=float(params.get("camera_location_x", 1.5)),
-                z=float(params.get("camera_location_z", 2.4)),
+                z=float(params.get("camera_location_z", 2.5)),
             )
         )
         route_file = str(params.get("route_file", ""))
@@ -190,8 +232,13 @@ class CarlaEnv(gym.Env):
         self.total_step = getattr(self, "total_step", 0)
         self.termination_reason = None
         self._is_collision = False
+        self._collision_this_step = False
         self._is_off_road = False
         self._collision_type = ""
+        self._collision_counts = {"layout": 0, "vehicle": 0, "pedestrian": 0}
+        self._collision_locations: List[carla.Location] = []
+        self._last_collision_actor_id = None
+        self._last_collision_time = -math.inf
         self._red_light_infraction = False
         self._red_light_ids = set()
         self._blocked_time = 0.0
@@ -200,6 +247,14 @@ class CarlaEnv(gym.Env):
         self._pid_previous_error = 0.0
         self._route_completions = 0
         self.last_reward_terms = {}
+
+    def _sample_traffic_counts(self) -> None:
+        self._episode_number_of_vehicles = self._python_random.randint(
+            self._vehicle_count_range[0], self._vehicle_count_range[1]
+        )
+        self._episode_number_of_walkers = self._python_random.randint(
+            self._walker_count_range[0], self._walker_count_range[1]
+        )
 
     def _set_weather(self) -> None:
         choices = weather_presets(self.weather_group, self.weather)
@@ -233,6 +288,16 @@ class CarlaEnv(gym.Env):
         self._active_route_id = -1
         return start, destination.location
 
+    def _choose_destination(self, origin: carla.Location) -> carla.Location:
+        candidates = [
+            item.location
+            for item in self._spawn_points
+            if item.location.distance(origin) > 50.0
+        ]
+        if not candidates:
+            raise RuntimeError("No destination is at least 50 m from the ego vehicle")
+        return self._python_random.choice(candidates)
+
     def _build_route(self, origin: carla.Location, destination: carla.Location) -> None:
         try:
             from agents.navigation.global_route_planner import GlobalRoutePlanner
@@ -245,7 +310,7 @@ class CarlaEnv(gym.Env):
         planner = GlobalRoutePlanner(
             self.world_map, self.route_sampling_resolution
         )
-        route = planner.trace_route(origin, destination)
+        route = trace_route_compat(planner, origin, destination)
         if len(route) < 2:
             raise RuntimeError("CARLA global planner returned an empty route")
         self._route = route
@@ -276,6 +341,9 @@ class CarlaEnv(gym.Env):
         raise RuntimeError("Failed to spawn the ego vehicle")
 
     def _spawn_traffic(self) -> None:
+        requested_vehicles = getattr(
+            self, "_episode_number_of_vehicles", self.number_of_vehicles
+        )
         spawn_points = list(self._spawn_points)
         self._python_random.shuffle(spawn_points)
         library = self.world.get_blueprint_library()
@@ -286,7 +354,7 @@ class CarlaEnv(gym.Env):
             and int(blueprint.get_attribute("number_of_wheels")) == 4
         ]
         for transform in spawn_points:
-            if len(self.spawned_vehicles) >= self.number_of_vehicles:
+            if len(self.spawned_vehicles) >= requested_vehicles:
                 break
             if transform.location.distance(self.ego.get_location()) < 8.0:
                 continue
@@ -306,12 +374,15 @@ class CarlaEnv(gym.Env):
                 vehicle.set_autopilot(True, self.tm_port)
 
     def _spawn_walkers(self) -> None:
+        requested_walkers = getattr(
+            self, "_episode_number_of_walkers", self.number_of_walkers
+        )
         library = self.world.get_blueprint_library()
         walker_blueprints = list(library.filter("walker.pedestrian.*"))
         controller_blueprint = library.find("controller.ai.walker")
         attempts = 0
         while (
-            len(self.spawned_walkers) < self.number_of_walkers
+            len(self.spawned_walkers) < requested_walkers
             and attempts < self.max_walker_spawn_attempts
         ):
             attempts += 1
@@ -339,16 +410,32 @@ class CarlaEnv(gym.Env):
             if destination is not None:
                 controller.go_to_location(destination)
             controller.set_max_speed(1.0 + self._python_random.random())
-        if len(self.spawned_walkers) < self.number_of_walkers:
+        if len(self.spawned_walkers) < requested_walkers:
             warnings.warn(
                 "Spawned {}/{} requested walkers".format(
-                    len(self.spawned_walkers), self.number_of_walkers
+                    len(self.spawned_walkers), requested_walkers
                 ),
                 RuntimeWarning,
             )
 
     def _on_collision(self, event: carla.CollisionEvent) -> None:
+        event_time = float(event.timestamp)
+        actor_id = int(event.other_actor.id)
+        if (
+            self._last_collision_actor_id == actor_id
+            and event_time - self._last_collision_time <= 5.0
+        ):
+            return
+        location = event.actor.get_location()
+        self._collision_locations = [
+            previous
+            for previous in self._collision_locations
+            if location.distance(previous) <= 5.0
+        ]
+        if any(location.distance(previous) <= 3.0 for previous in self._collision_locations):
+            return
         self._is_collision = True
+        self._collision_this_step = True
         type_id = event.other_actor.type_id
         if type_id.startswith("vehicle."):
             self._collision_type = "vehicle"
@@ -356,12 +443,23 @@ class CarlaEnv(gym.Env):
             self._collision_type = "pedestrian"
         else:
             self._collision_type = "layout"
+        self._collision_counts[self._collision_type] += 1
+        self._collision_locations.append(location)
+        self._last_collision_actor_id = actor_id if actor_id != 0 else None
+        self._last_collision_time = event_time
 
     def _on_camera(self, image: carla.Image) -> None:
         bgra = np.frombuffer(image.raw_data, dtype=np.uint8).reshape(
             image.height, image.width, 4
         )
-        rgb_chw = bgra[:, :, :3][:, :, ::-1].transpose(2, 0, 1).copy()
+        rgb = bgra[:, :, :3][:, :, ::-1]
+        if image.width != self.image_size or image.height != self.image_size:
+            rgb = cv2.resize(
+                rgb,
+                (self.image_size, self.image_size),
+                interpolation=cv2.INTER_AREA,
+            )
+        rgb_chw = rgb.transpose(2, 0, 1).copy()
         item = (image.frame, rgb_chw)
         try:
             self._camera_queue.put_nowait(item)
@@ -381,8 +479,8 @@ class CarlaEnv(gym.Env):
         self.collision_sensor.listen(self._on_collision)
 
         camera_bp = library.find("sensor.camera.rgb")
-        camera_bp.set_attribute("image_size_x", str(self.image_size))
-        camera_bp.set_attribute("image_size_y", str(self.image_size))
+        camera_bp.set_attribute("image_size_x", str(self.camera_sensor_width))
+        camera_bp.set_attribute("image_size_y", str(self.camera_sensor_height))
         camera_bp.set_attribute("fov", str(self.camera_fov))
         camera_bp.set_attribute("sensor_tick", "0.0")
         self.rgb_camera = self.world.spawn_actor(
@@ -430,6 +528,7 @@ class CarlaEnv(gym.Env):
         self._reset_episode_state()
         self._set_weather()
         start, destination = self._choose_task()
+        self._sample_traffic_counts()
         self._spawn_ego(start)
         self._build_route(start.location, destination)
         self._spawn_traffic()
@@ -477,6 +576,8 @@ class CarlaEnv(gym.Env):
         self.ego.apply_control(control)
 
     def _transition(self, action: np.ndarray):
+        self._collision_this_step = False
+        self._red_light_infraction = False
         self._tick()
         self.time_step += 1
         self.total_step += 1
@@ -496,7 +597,13 @@ class CarlaEnv(gym.Env):
                 "route_id": self._active_route_id,
                 "route_completion": self.route_completion,
                 "collision_type": self._collision_type,
+                "collision_count": sum(self._collision_counts.values()),
+                "collision_counts": dict(self._collision_counts),
+                "red_light_count": len(self._red_light_ids),
+                "blocked_count": int(self.termination_reason == "blocked"),
                 "weather": self.weather,
+                "requested_vehicles": self._episode_number_of_vehicles,
+                "requested_walkers": self._episode_number_of_walkers,
             }
         )
         return obs, reward, cost, done, info
@@ -713,7 +820,7 @@ class CarlaEnv(gym.Env):
         _, _, heading_error = self._lane_measurements(self.ego.get_transform())
         steer = float(self.ego.get_control().steer)
         context = {
-            "is_collision": self._is_collision,
+            "is_collision": self._collision_this_step,
             "is_off_road": self._is_off_road,
             "red_light_infraction": self._red_light_infraction,
             "safe_desired_speed": self._safe_desired_speed(),
@@ -735,7 +842,7 @@ class CarlaEnv(gym.Env):
         return float(reward)
 
     def _get_cost(self, obs: Dict[str, np.ndarray]) -> float:
-        cost = 20.0 * float(self._is_collision or self._is_off_road)
+        cost = 20.0 * float(self._collision_this_step or self._is_off_road)
         cost += 10.0 * float(self._red_light_infraction)
         speed = float(obs["ego_state"][3])
         if speed > self.desired_speed:
@@ -745,11 +852,8 @@ class CarlaEnv(gym.Env):
     def _terminal(self, obs: Dict[str, np.ndarray]) -> bool:
         speed = float(obs["ego_state"][3])
         self._detect_red_light_infraction(speed)
-        if self._is_collision:
+        if self._collision_this_step and self.route_mode == "endless":
             self.termination_reason = "collision"
-            return True
-        if self._red_light_infraction:
-            self.termination_reason = "red_light"
             return True
 
         exact_waypoint = self.world_map.get_waypoint(
@@ -783,7 +887,7 @@ class CarlaEnv(gym.Env):
                 self._route_index = len(self._route) - 1
                 self.termination_reason = "route_completed"
                 return True
-            _, destination = self._choose_task()
+            destination = self._choose_destination(self.ego.get_location())
             self._build_route(self.ego.get_location(), destination)
             if self._expert_agent is not None:
                 self._expert_agent.set_destination(destination)

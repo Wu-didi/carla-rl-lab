@@ -26,7 +26,7 @@ The evidence label must appear next to every result table and curve.
 | Primary train benchmark | `nocrash_train_v0` |
 | Curriculum | `nocrash_train_empty_v0`, labeled separately |
 | Train seeds | 0, 1, 2 |
-| Evaluation | `nocrash_0915_v0`, all 25 routes x 2 weathers x 3 densities |
+| Evaluation | `rlfold_nocrash_0915_v0`, all 25 routes x 2 weathers x 3 densities |
 | Logging | TensorBoard; W&B optional; full config always saved |
 
 No two algorithm rows may use different observations, route files, weather,
@@ -56,7 +56,7 @@ CARLA 0.9.15 server:
 
 | Item | Result |
 | --- | --- |
-| Camera/route smoke | 10 steps, nonblank RGB, packed state 63,526 |
+| Camera/route smoke | 10 steps, nonblank RGB, packed state 42,358 |
 | Online training smoke | 64 CARLA steps, 57 SAC updates |
 | Artifacts | TensorBoard events plus checkpoints at 32 and 64 steps |
 | Limited evaluation | One Town02 route and one weather; failed after collision |

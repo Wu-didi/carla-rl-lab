@@ -46,38 +46,41 @@ CARLA checkpoint；只有在下面固定协议中完成训练与验证后，才�
 
 ## 观测与控制协议
 
-默认 `pixel_v1` 参考
+`pixel_v1` 参考
 [RLAD](https://arxiv.org/abs/2305.18510) 与
 [RLfOLD](https://ojs.aaai.org/index.php/AAAI/article/view/29049) 的策略输入形式：
 
 ```text
-前视 RGB：           3 帧 x 3 x 84 x 84，uint8
+前视 RGB：           2 帧 x 3 x 84 x 84，uint8（RLfOLD profile）
 路线：               10 个 ego 坐标系下的 (x, y) 路线点
 车辆测量：           归一化速度 + 上一时刻转角
-Replay 打包状态：    63,526 个 uint8
+Replay 打包状态：    42,358 个 uint8
 策略动作：           目标速度 + 转角，均在 [-1, 1]
 底层控制：           目标速度经 PID 转换为油门/刹车
 ```
 
 全局位姿、车道测量、周围 actor 状态、激光雷达和 risk field 都不是策略输入；这些
-信息只允许用于环境奖励、终止或评估。当前实用默认值为 `84x84`，而 RLAD 使用
+信息只允许用于环境奖励、终止或评估。RLfOLD benchmark profile 只用一路前视
+RGB：原始渲染 `256x256`、FOV 90°、安装位置 `(x=1.5 m, z=2.4 m)`，进入轻量
+baseline 前缩放到 `84x84`。RLAD 使用
 `256x256`、CARLA 0.9.10.1 和不同训练预算，因此本项目 CARLA 0.9.15 适配结果不能
 直接写成与 RLAD 完全同协议的成绩。详细边界见[观测协议](docs/observations.md)。
 
 ## NoCrash 0.9.15
 
-`nocrash_0915_v0` 将 RLAD/RLfOLD 使用的固定路线与验证网格适配到 CARLA
-0.9.15 API：
+主 suite `rlfold_nocrash_0915_v0` 将 RLfOLD 的 NoCrash 任务协议适配到 CARLA
+0.9.15 API；`nocrash_0915_v0` 保留为兼容别名：
 
 | 划分 | 地图 | 车辆 / 行人 | 天气 | Episode 数 |
 | --- | --- | ---: | --- | ---: |
-| 训练 | Town01 | 空场景或 20 / 50 | 4 种训练天气 | 持续抽取路线 |
+| 训练 | Town01 | 每回合采样 0-150 / 0-300 | 4 种训练天气 | 持续抽取路线 |
 | Empty | Town02 | 0 / 0 | 2 种未见天气 | 25 路线 x 2 = 50 |
 | Regular | Town02 | 15 / 50 | 2 种未见天气 | 50 |
 | Dense | Town02 | 70 / 150 | 2 种未见天气 | 50 |
 
-成功表示在没有碰撞、驶出车道、闯红灯终止或堵塞的情况下完成路线。报告包含成功率、
-路线完成度、return、速度、分类碰撞、红灯、堵塞和每公里违规数。红灯检测是明确记录
+成功表示完成路线且没有碰撞。驶出车道、逆行、堵塞和超时会失败终止；固定路线评测中
+红灯只计数，不提前结束。报告包含成功率、路线完成度、return、速度、分类碰撞、红灯、
+堵塞和每公里违规数。红灯检测是明确记录
 的 CARLA 0.9.15 近似实现，因此该 suite 称为 0.9.15 adaptation，而不是旧版
 CARLA 0.8 NoCrash 原生 runner。
 
@@ -213,8 +216,8 @@ python scripts/smoke_carla.py \
   --frame-output artifacts/smoke/nocrash_town02_rgb.png
 ```
 
-Smoke 应打印一致的 CARLA client/server 版本、`63526` 的 `state_dim`、非零图像
-统计量，并完成 10 个 step。
+Smoke 应打印一致的 CARLA client/server 版本、`42358` 的 `state_dim`、值为 `1`
+的 `num_cameras`、非零前视图像统计量，并完成 10 个 step。
 
 ## 训练 Pixel SAC
 
@@ -232,7 +235,9 @@ python scripts/train.py \
   --seed 0
 ```
 
-Town01 常规交通使用 `--benchmark nocrash_train_v0`。恢复训练时传入最后一个
+RLfOLD 的 Town01 交通分布使用 `--benchmark nocrash_train_v0`，每回合均匀采样
+0-150 辆车与 0-300 个行人；固定 20/50 课程使用
+`nocrash_train_regular_v0`。恢复训练时传入最后一个
 checkpoint，并把 `total-timesteps` 设置为更大的绝对步数：
 
 ```bash
@@ -241,8 +246,8 @@ python scripts/train.py \
   --total-timesteps 200000
 ```
 
-每条 transition 包含两个 `63,526` 字节的观测；30,000 条 replay 仅 states 就约
-占 3.8 GB。应根据机器内存设置 buffer，不能直接照搬大规模论文参数。
+每条 transition 包含两个 `42,358` 字节的观测；30,000 条 replay 的观测约占
+2.5 GB。应根据机器内存设置 buffer。
 
 ## 在相同协议验证
 
@@ -260,7 +265,7 @@ python scripts/evaluate.py \
 ```bash
 python scripts/evaluate.py \
   --checkpoint /path/to/sac_ckpt_last.pt \
-  --suite nocrash_0915_v0 \
+  --suite rlfold_nocrash_0915_v0 \
   --logger tensorboard
 ```
 

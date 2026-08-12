@@ -5,10 +5,15 @@ from dataclasses import dataclass
 class Config:
     # Algorithm
     algorithm: str = 'sac'
+    benchmark_name: str = ''
 
     # Env
     number_of_vehicles: int = 140
     number_of_walkers: int = 0
+    min_number_of_vehicles: int = -1
+    max_number_of_vehicles: int = -1
+    min_number_of_walkers: int = -1
+    max_number_of_walkers: int = -1
     dt: float = 0.1
     ego_vehicle_filter: str = 'vehicle.tesla.model3'
     surrounding_vehicle_spawned_randomly: bool = True
@@ -25,9 +30,13 @@ class Config:
     observation_mode: str = 'pixel_v1'
     image_size: int = 84
     frame_stack: int = 3
-    camera_fov: float = 90.0
+    camera_layout: str = 'front'
+    num_cameras: int = 1
+    camera_sensor_width: int = 640
+    camera_sensor_height: int = 384
+    camera_fov: float = 120.0
     camera_location_x: float = 1.5
-    camera_location_z: float = 2.4
+    camera_location_z: float = 2.5
     route_file: str = ''
     route_id: int = -1
     route_mode: str = 'endless'  # endless or fixed
@@ -98,6 +107,7 @@ class Config:
     max_step_retries: int = 3
     checkpoint_keep: int = 5
     checkpoint_replay_buffer: bool = False
+    require_clean_git: bool = False
 
     # Experiment logging
     logger_backend: str = 'tensorboard'  # tensorboard, wandb, both, none

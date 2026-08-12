@@ -29,6 +29,8 @@ def collect(cfg: Config, output_path: str, transition_count: int, policy: str) -
     if transition_count <= 0:
         raise ValueError("--transitions must be positive")
     set_seed(cfg.seed)
+    collection_started_at = utc_timestamp()
+    source_commit = git_commit()
     arrays = {
         "states": [],
         "actions": [],
@@ -82,8 +84,9 @@ def collect(cfg: Config, output_path: str, transition_count: int, policy: str) -
 
         metadata = {
             "schema_version": 2,
-            "created_at": utc_timestamp(),
-            "git_commit": git_commit(),
+            "created_at": collection_started_at,
+            "finished_at": utc_timestamp(),
+            "git_commit": source_commit,
             "collector": policy,
             "carla_versions": carla_versions(env),
             "observation_fields": list(DEFAULT_FIELDS),

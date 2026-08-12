@@ -102,10 +102,10 @@ class RolloutBuffer:
     ) -> None:
         if len(self) >= self.capacity:
             raise RuntimeError("rollout buffer is full")
-        self.states.append(np.asarray(state, dtype=np.float32))
+        self.states.append(np.asarray(state))
         self.actions.append(np.asarray(action, dtype=np.float32))
         self.next_states.append(
-            None if next_state is None else np.asarray(next_state, dtype=np.float32)
+            None if next_state is None else np.asarray(next_state)
         )
         self.rewards.append(float(reward))
         self.episode_ends.append(bool(done))
@@ -140,7 +140,7 @@ class RolloutBuffer:
             next_values=next_values,
         )
         batch = {
-            "states": np.asarray(self.states, dtype=np.float32),
+            "states": np.asarray(self.states),
             "actions": np.asarray(self.actions, dtype=np.float32),
             "rewards": rewards,
             "dones": dones,
@@ -153,7 +153,7 @@ class RolloutBuffer:
             "next_values": next_values,
         }
         if all(next_state is not None for next_state in self.next_states):
-            batch["next_states"] = np.asarray(self.next_states, dtype=np.float32)
+            batch["next_states"] = np.asarray(self.next_states)
         return batch
 
     def end_episode(self, next_value: float = 0.0, terminal: bool = False) -> None:

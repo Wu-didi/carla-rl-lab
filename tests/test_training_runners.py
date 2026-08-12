@@ -42,6 +42,17 @@ class FakeAgent:
         return np.zeros(2, dtype=np.float32)
 
 
+class FakeOnPolicyAgent:
+    def act_with_info(self, state):
+        return np.zeros(2, dtype=np.float32), 0.0, 0.0
+
+    def value(self, state):
+        return 0.0
+
+    def update(self, batch):
+        return {"actor_loss": 0.0}
+
+
 class FailingEnv(FakeEnv):
     def step(self, action):
         self.steps += 1
@@ -169,6 +180,36 @@ class TrainingRunnerTest(unittest.TestCase):
         self.assertEqual(cfg.town, "Town01")
         self.assertEqual(cfg.action_mode, "target_speed_2d")
         self.assertEqual(cfg.action_dim, 2)
+
+    def test_on_policy_records_completed_run(self):
+        env = FakeEnv()
+        logger = FakeLogger()
+        cfg = Config()
+        cfg.algorithm = "ppo"
+        cfg.total_timesteps = 3
+        cfg.rollout_steps = 2
+        cfg.checkpoint_interval = 2
+        cfg.logger_backend = "none"
+
+        with tempfile.TemporaryDirectory() as output_dir:
+            cfg.run_name = output_dir
+            with patch.object(
+                on_policy_runner, "make_carla_env", return_value=env
+            ), patch.object(
+                on_policy_runner,
+                "create_agent",
+                return_value=FakeOnPolicyAgent(),
+            ), patch.object(
+                on_policy_runner,
+                "build_experiment_logger",
+                return_value=logger,
+            ), patch.object(on_policy_runner, "save_training_checkpoint"):
+                on_policy_runner.train(cfg)
+
+        self.assertEqual(env.steps, 3)
+        self.assertTrue(env.closed)
+        self.assertEqual(logger.run_record["status"], "completed")
+        self.assertEqual(logger.run_record["global_step"], 3)
 
     def test_off_policy_stops_and_checkpoints_at_step_budget(self):
         env = FakeEnv()

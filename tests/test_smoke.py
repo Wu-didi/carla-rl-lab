@@ -203,6 +203,29 @@ class CoreSmokeTest(unittest.TestCase):
                 self.assertTrue(all(np.isfinite(float(value)) for value in logs.values()))
                 self._assert_checkpoint_roundtrip(name, agent, cfg)
 
+    def test_pixel_ppo(self):
+        state_dim = pixel_state_dim(32, 1, 4)
+        cfg = tiny_config(state_dim=state_dim, network="Pixel_SAC")
+        cfg.action_dim = 3
+        agent = create_agent("ppo", cfg)
+        rollout = RolloutBuffer(4, gamma=0.99, gae_lambda=0.95)
+        for _ in range(4):
+            state = np.random.randint(0, 256, state_dim, dtype=np.uint8)
+            action, log_prob, value = agent.act_with_info(state)
+            rollout.add(state, action, 1.0, False, value, log_prob, state)
+        batch = rollout.batch(last_value=0.0)
+        self.assertEqual(batch["states"].dtype, np.uint8)
+        logs = agent.update(batch)
+        self.assertTrue(all(np.isfinite(float(value)) for value in logs.values()))
+        with tempfile.TemporaryDirectory() as checkpoint_dir:
+            agent.save(checkpoint_dir, "smoke")
+            restored = create_agent("ppo", cfg)
+            restored.load(os.path.join(checkpoint_dir, "ppo_ckpt_smoke.pt"))
+            self.assertEqual(
+                restored.act(np.zeros(state_dim, dtype=np.uint8)).shape,
+                (cfg.action_dim,),
+            )
+
     def test_offline_algorithms(self):
         cfg = tiny_config()
         batch = random_batch(8, 8)

@@ -12,6 +12,7 @@ from torch.distributions import Normal
 from carla_rl_lab.algorithms.base import BaseAgent
 from carla_rl_lab.algorithms.common import mlp
 from carla_rl_lab.algorithms.registry import AlgorithmSpec, register_algorithm
+from carla_rl_lab.algorithms.sac import make_encoder
 from carla_rl_lab.utils.checkpoint import torch_load
 
 
@@ -77,6 +78,83 @@ class ActorCritic(nn.Module):
         return (distribution.log_prob(raw_actions) - correction).sum(dim=-1)
 
 
+class PixelActorCritic(nn.Module):
+    """Shared visual encoder with Gaussian policy and value heads."""
+
+    def __init__(self, cfg: Any) -> None:
+        super().__init__()
+        self.encoder = make_encoder(
+            cfg.state_dim,
+            cfg.hidden_dim,
+            cfg.network,
+            cfg.image_size,
+            cfg.frame_stack,
+            cfg.max_waypoints,
+        )
+        self.policy_mean = nn.Linear(self.encoder.output_dim, cfg.action_dim)
+        self.policy_log_std = nn.Parameter(torch.zeros(cfg.action_dim))
+        self.value_head = nn.Sequential(
+            nn.Linear(self.encoder.output_dim, cfg.hidden_dim),
+            nn.Tanh(),
+            nn.Linear(cfg.hidden_dim, 1),
+        )
+        self.action_bound = float(cfg.action_bound)
+
+    def _distribution(self, features: torch.Tensor) -> Normal:
+        mean = self.policy_mean(features)
+        log_std = self.policy_log_std.clamp(-5.0, 2.0).expand_as(mean)
+        return Normal(mean, log_std.exp())
+
+    def distribution(self, states: torch.Tensor) -> Normal:
+        features, _ = self.encoder(states)
+        return self._distribution(features)
+
+    def value(self, states: torch.Tensor) -> torch.Tensor:
+        features, _ = self.encoder(states)
+        return self.value_head(features).squeeze(-1)
+
+    def sample(
+        self, states: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        features, _ = self.encoder(states)
+        distribution = self._distribution(features)
+        raw_actions = distribution.rsample()
+        unit_actions = torch.tanh(raw_actions)
+        actions = unit_actions * self.action_bound
+        log_probs = self._log_prob(distribution, raw_actions, unit_actions)
+        values = self.value_head(features).squeeze(-1)
+        return actions, log_probs, values
+
+    def deterministic(self, states: torch.Tensor) -> torch.Tensor:
+        features, _ = self.encoder(states)
+        return torch.tanh(self.policy_mean(features)) * self.action_bound
+
+    def evaluate_actions(
+        self, states: torch.Tensor, actions: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        features, _ = self.encoder(states)
+        distribution = self._distribution(features)
+        unit_actions = (actions / self.action_bound).clamp(-0.999999, 0.999999)
+        raw_actions = 0.5 * (
+            torch.log1p(unit_actions) - torch.log1p(-unit_actions)
+        )
+        log_probs = self._log_prob(distribution, raw_actions, unit_actions)
+        entropy = distribution.entropy().sum(dim=-1)
+        values = self.value_head(features).squeeze(-1)
+        return log_probs, entropy, values
+
+    def _log_prob(
+        self,
+        distribution: Normal,
+        raw_actions: torch.Tensor,
+        unit_actions: torch.Tensor,
+    ) -> torch.Tensor:
+        correction = torch.log(
+            self.action_bound * (1.0 - unit_actions.pow(2)) + 1e-6
+        )
+        return (distribution.log_prob(raw_actions) - correction).sum(dim=-1)
+
+
 class OnPolicyAgent(BaseAgent):
     algorithm_name = "on_policy"
 
@@ -86,11 +164,16 @@ class OnPolicyAgent(BaseAgent):
         self.max_grad_norm = float(getattr(cfg, "max_grad_norm", 0.5))
         self.entropy_coef = float(getattr(cfg, "entropy_coef", 0.0))
         self.value_coef = float(getattr(cfg, "value_coef", 0.5))
-        self.model = ActorCritic(
-            cfg.state_dim,
-            cfg.hidden_dim,
-            cfg.action_dim,
-            cfg.action_bound,
+        self.model = (
+            PixelActorCritic(cfg)
+            if str(getattr(cfg, "network", "SAC")).lower()
+            in ("pixel_sac", "pixel")
+            else ActorCritic(
+                cfg.state_dim,
+                cfg.hidden_dim,
+                cfg.action_dim,
+                cfg.action_bound,
+            )
         ).to(self.device)
         self.optimizer = torch.optim.Adam(
             self.model.parameters(), lr=float(getattr(cfg, "policy_lr", 3e-4))
@@ -99,18 +182,26 @@ class OnPolicyAgent(BaseAgent):
 
     def act(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
         state = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+        was_training = self.model.training
+        self.model.eval()
         with torch.no_grad():
             action = (
                 self.model.deterministic(state)
                 if deterministic
                 else self.model.sample(state)[0]
             )
+        if was_training:
+            self.model.train()
         return action.cpu().numpy().reshape(-1).astype(np.float32)
 
     def act_with_info(self, obs: np.ndarray) -> Tuple[np.ndarray, float, float]:
         state = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+        was_training = self.model.training
+        self.model.eval()
         with torch.no_grad():
             action, log_prob, value = self.model.sample(state)
+        if was_training:
+            self.model.train()
         return (
             action.cpu().numpy().reshape(-1).astype(np.float32),
             float(log_prob.item()),
@@ -119,8 +210,12 @@ class OnPolicyAgent(BaseAgent):
 
     def value(self, obs: np.ndarray) -> float:
         state = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+        was_training = self.model.training
+        self.model.eval()
         with torch.no_grad():
             value = self.model.value(state)
+        if was_training:
+            self.model.train()
         return float(value.item())
 
     def action_log_probs(self, states: Any, actions: Any) -> torch.Tensor:

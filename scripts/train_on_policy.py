@@ -23,7 +23,7 @@ from carla_rl_lab.utils import (
     save_training_checkpoint,
     set_seed,
 )
-from carla_rl_lab.utils.provenance import carla_versions
+from carla_rl_lab.utils.provenance import carla_versions, git_is_dirty
 
 
 def on_policy_algorithms():
@@ -45,6 +45,10 @@ def train(cfg: Config) -> None:
         raise ValueError("checkpoint_interval must be positive")
     if cfg.max_step_retries <= 0:
         raise ValueError("max_step_retries must be positive")
+    if cfg.require_clean_git and git_is_dirty(project_root()):
+        raise RuntimeError(
+            "Public runs require a clean git worktree; commit or stash changes first"
+        )
     set_seed(cfg.seed)
     run_name = cfg.run_name or "{}_seed{}".format(cfg.algorithm, cfg.seed)
     log_dir = os.path.join(project_root(), "artifacts", "runs", run_name)
@@ -52,12 +56,15 @@ def train(cfg: Config) -> None:
     os.makedirs(checkpoint_dir, exist_ok=True)
     logger = build_experiment_logger(cfg, log_dir, asdict(cfg))
     env = None
+    global_step = 0
+    update_index = 0
+    episode_index = 0
     try:
         env = make_carla_env(cfg)
+        logger.update_run_record(
+            {"status": "running", "carla_versions": carla_versions(env)}
+        )
         agent = create_agent(cfg.algorithm, cfg)
-        global_step = 0
-        update_index = 0
-        episode_index = 0
         if cfg.use_pretrained_model:
             agent.load(cfg.pretrained_model_path)
             metadata = checkpoint_metadata(cfg.pretrained_model_path)
@@ -135,6 +142,27 @@ def train(cfg: Config) -> None:
                             "episode/cost": episode_cost,
                             "episode/length": float(episode_length),
                             "episode/index": float(episode_index),
+                            "traffic/requested_vehicles": float(
+                                info.get("requested_vehicles", 0)
+                            ),
+                            "traffic/spawned_vehicles": float(
+                                info.get("spawned_vehicles", 0)
+                            ),
+                            "traffic/requested_walkers": float(
+                                info.get("requested_walkers", 0)
+                            ),
+                            "traffic/spawned_walkers": float(
+                                info.get("spawned_walkers", 0)
+                            ),
+                            "events/collisions": float(
+                                info.get("collision_count", 0)
+                            ),
+                            "events/red_lights": float(
+                                info.get("red_light_count", 0)
+                            ),
+                            "episode/route_completion": float(
+                                info.get("route_completion", 0.0)
+                            ),
                         },
                         global_step,
                     )
@@ -178,9 +206,29 @@ def train(cfg: Config) -> None:
                     update_index, cfg.algorithm, global_step, len(rollout)
                 )
             )
+        logger.finish(
+            "completed",
+            global_step=global_step,
+            update_index=update_index,
+            episode_index=episode_index,
+        )
+    except BaseException as exc:
+        logger.finish(
+            "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed",
+            global_step=global_step,
+            update_index=update_index,
+            episode_index=episode_index,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        raise
     finally:
         if env is not None:
-            env.close()
+            try:
+                env.close()
+                print("Cleared all CARLA actors")
+            except Exception:
+                traceback.print_exc()
         logger.close()
 
 
@@ -194,6 +242,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--rollout-steps", type=int, default=None)
     parser.add_argument("--checkpoint-interval", type=int, default=None)
     parser.add_argument("--hidden-dim", type=int, default=None)
+    parser.add_argument("--network", choices=["SAC", "Pixel_SAC"], default=None)
     parser.add_argument("--ppo-epochs", type=int, default=None)
     parser.add_argument("--ppo-minibatch-size", type=int, default=None)
     parser.add_argument(
@@ -218,6 +267,12 @@ def build_argparser() -> argparse.ArgumentParser:
         default=None,
     )
     parser.add_argument("--checkpoint", default="")
+    parser.add_argument(
+        "--require-clean-git",
+        action="store_true",
+        default=None,
+        help="Refuse to start when the git worktree has uncommitted changes",
+    )
     return parser
 
 

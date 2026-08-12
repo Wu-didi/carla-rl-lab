@@ -121,7 +121,6 @@ def train(cfg: Config) -> None:
                     done,
                     value,
                     log_prob,
-                    next_state=next_state,
                     terminal=terminal,
                     next_value=timeout_value,
                 )

@@ -231,6 +231,16 @@ def evaluate_benchmark(
             "success": success,
         }
         results.append(result)
+        print(
+            "[Eval {:03d}/{:03d}] route={} weather={} success={} reason={}".format(
+                episode_index + 1,
+                len(tasks),
+                route_id,
+                weather,
+                int(success),
+                termination_reason,
+            )
+        )
         if logger is not None:
             logger.log(
                 {

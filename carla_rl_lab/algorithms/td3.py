@@ -5,12 +5,75 @@ from typing import Any, Dict, Optional, Union
 
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 from carla_rl_lab.algorithms.base import BaseAgent
 from carla_rl_lab.algorithms.common import ContinuousCritic, DeterministicActor, soft_update
 from carla_rl_lab.algorithms.registry import AlgorithmSpec, register_algorithm
+from carla_rl_lab.algorithms.sac import make_encoder
 from carla_rl_lab.utils.checkpoint import torch_load
+
+
+class EncodedDeterministicActor(nn.Module):
+    def __init__(self, cfg: Any):
+        super().__init__()
+        self.encoder = make_encoder(
+            cfg.state_dim,
+            cfg.hidden_dim,
+            cfg.network,
+            cfg.image_size,
+            cfg.frame_stack,
+            cfg.max_waypoints,
+        )
+        self.head = nn.Sequential(
+            nn.Linear(self.encoder.output_dim, cfg.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(cfg.hidden_dim, cfg.action_dim),
+        )
+        self.action_bound = float(cfg.action_bound)
+
+    def forward(self, state: torch.Tensor) -> torch.Tensor:
+        features, _ = self.encoder(state)
+        return torch.tanh(self.head(features)) * self.action_bound
+
+
+class EncodedContinuousCritic(nn.Module):
+    def __init__(self, cfg: Any):
+        super().__init__()
+        self.encoder = make_encoder(
+            cfg.state_dim,
+            cfg.hidden_dim,
+            cfg.network,
+            cfg.image_size,
+            cfg.frame_stack,
+            cfg.max_waypoints,
+        )
+        self.head = nn.Sequential(
+            nn.Linear(self.encoder.output_dim + cfg.action_dim, cfg.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(cfg.hidden_dim, cfg.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(cfg.hidden_dim, 1),
+        )
+
+    def forward(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        features, _ = self.encoder(state)
+        return self.head(torch.cat([features, action], dim=-1))
+
+
+def _actor(cfg: Any) -> nn.Module:
+    if str(cfg.network).lower() in ("pixel_sac", "pixel"):
+        return EncodedDeterministicActor(cfg)
+    return DeterministicActor(
+        cfg.state_dim, cfg.hidden_dim, cfg.action_dim, cfg.action_bound
+    )
+
+
+def _critic(cfg: Any) -> nn.Module:
+    if str(cfg.network).lower() in ("pixel_sac", "pixel"):
+        return EncodedContinuousCritic(cfg)
+    return ContinuousCritic(cfg.state_dim, cfg.hidden_dim, cfg.action_dim)
 
 
 class Td3Agent(BaseAgent):
@@ -28,12 +91,12 @@ class Td3Agent(BaseAgent):
         self.policy_delay = int(getattr(cfg, "td3_policy_delay", 2))
         self.update_step = 0
 
-        self.actor = DeterministicActor(cfg.state_dim, cfg.hidden_dim, cfg.action_dim, cfg.action_bound).to(self.device)
-        self.actor_target = DeterministicActor(cfg.state_dim, cfg.hidden_dim, cfg.action_dim, cfg.action_bound).to(self.device)
-        self.critic_1 = ContinuousCritic(cfg.state_dim, cfg.hidden_dim, cfg.action_dim).to(self.device)
-        self.critic_2 = ContinuousCritic(cfg.state_dim, cfg.hidden_dim, cfg.action_dim).to(self.device)
-        self.critic_target_1 = ContinuousCritic(cfg.state_dim, cfg.hidden_dim, cfg.action_dim).to(self.device)
-        self.critic_target_2 = ContinuousCritic(cfg.state_dim, cfg.hidden_dim, cfg.action_dim).to(self.device)
+        self.actor = _actor(cfg).to(self.device)
+        self.actor_target = _actor(cfg).to(self.device)
+        self.critic_1 = _critic(cfg).to(self.device)
+        self.critic_2 = _critic(cfg).to(self.device)
+        self.critic_target_1 = _critic(cfg).to(self.device)
+        self.critic_target_2 = _critic(cfg).to(self.device)
 
         self.actor_target.load_state_dict(self.actor.state_dict())
         self.critic_target_1.load_state_dict(self.critic_1.state_dict())
@@ -45,8 +108,12 @@ class Td3Agent(BaseAgent):
 
     def act(self, obs: np.ndarray, deterministic: bool = False) -> np.ndarray:
         state = torch.tensor(obs[None], dtype=torch.float32, device=self.device)
+        was_training = self.actor.training
+        self.actor.eval()
         with torch.no_grad():
             action = self.actor(state).cpu().numpy().reshape(-1)
+        if was_training:
+            self.actor.train()
         if not deterministic and self.exploration_noise > 0.0:
             action = action + np.random.normal(0.0, self.exploration_noise, size=action.shape)
         return np.clip(action, -self.action_bound, self.action_bound).astype(np.float32)

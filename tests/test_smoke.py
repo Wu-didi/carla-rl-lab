@@ -290,6 +290,25 @@ class CoreSmokeTest(unittest.TestCase):
         logs = agent.update(batch)
         self.assertTrue(np.isfinite(logs["critic_1_loss"]))
 
+    def test_pixel_td3(self):
+        state_dim = pixel_state_dim(32, 1, 4)
+        cfg = tiny_config(state_dim=state_dim, network="Pixel_SAC")
+        agent = create_agent("td3", cfg)
+        packed = np.zeros(state_dim, dtype=np.uint8)
+        action = agent.act(packed, deterministic=True)
+        self.assertEqual(action.shape, (3,))
+        batch = random_batch(2, state_dim)
+        batch["states"] = np.random.randint(
+            0, 256, size=(2, state_dim), dtype=np.uint8
+        )
+        batch["next_states"] = np.random.randint(
+            0, 256, size=(2, state_dim), dtype=np.uint8
+        )
+        first_logs = agent.update(batch)
+        second_logs = agent.update(batch)
+        self.assertTrue(np.isfinite(first_logs["critic_1_loss"]))
+        self.assertTrue(np.isfinite(second_logs["actor_loss"]))
+
     def test_default_front_camera_contract(self):
         cfg = Config()
         self.assertEqual(cfg.camera_layout, "front")

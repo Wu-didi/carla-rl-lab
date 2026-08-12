@@ -81,6 +81,11 @@ def checkpoint_report(path: str):
     }
 
 
+def checkpoint_label(path: str) -> str:
+    name = os.path.splitext(os.path.basename(path))[0]
+    return name.rsplit("_ckpt_", 1)[-1]
+
+
 def evaluate_one(args: argparse.Namespace, benchmark_name: str):
     cfg = Config()
     metadata = apply_checkpoint_config(cfg, args.checkpoint)
@@ -111,6 +116,7 @@ def evaluate_one(args: argparse.Namespace, benchmark_name: str):
         "evaluations",
         benchmark_name,
         cfg.algorithm,
+        checkpoint_label(args.checkpoint),
     )
     os.makedirs(output_dir, exist_ok=True)
     logger = build_experiment_logger(cfg, output_dir, asdict(cfg))
@@ -118,6 +124,7 @@ def evaluate_one(args: argparse.Namespace, benchmark_name: str):
     env = None
     try:
         env = make_carla_env(cfg)
+        logger.update_run_record({"status": "evaluating"})
         agent = create_agent(cfg.algorithm, cfg)
         agent.load(args.checkpoint)
         report = evaluate_benchmark(
@@ -137,7 +144,21 @@ def evaluate_one(args: argparse.Namespace, benchmark_name: str):
             json.dump(report, report_file, indent=2)
         print(json.dumps(report["summary"], indent=2))
         print("Benchmark report -> {}".format(report_path))
+        logger.finish(
+            "completed",
+            benchmark=benchmark_name,
+            episodes=len(report["episodes"]),
+            summary=report["summary"],
+        )
         return report
+    except BaseException as exc:
+        logger.finish(
+            "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed",
+            benchmark=benchmark_name,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        raise
     finally:
         if env is not None:
             env.close()
@@ -167,6 +188,7 @@ def main() -> None:
             "evaluations",
             args.suite,
             next(iter(reports.values()))["algorithm"],
+            checkpoint_label(args.checkpoint),
         )
         os.makedirs(suite_dir, exist_ok=True)
         suite_path = os.path.join(suite_dir, "report.json")

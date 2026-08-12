@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from dataclasses import asdict
 
@@ -66,6 +67,11 @@ def build_argparser() -> argparse.ArgumentParser:
         choices=["online", "offline", "disabled"],
         default="offline",
     )
+    parser.add_argument(
+        "--output-tag",
+        default="",
+        help="Optional filesystem-safe label appended to the evaluation scope",
+    )
     return parser
 
 
@@ -84,6 +90,20 @@ def checkpoint_report(path: str):
 def checkpoint_label(path: str) -> str:
     name = os.path.splitext(os.path.basename(path))[0]
     return name.rsplit("_ckpt_", 1)[-1]
+
+
+def evaluation_scope(args: argparse.Namespace) -> str:
+    limits = []
+    for name in ("episodes", "routes", "weathers"):
+        value = int(getattr(args, name))
+        if value > 0:
+            limits.append("{}{}".format(name, value))
+    scope = "_".join(limits) if limits else "full"
+    if args.output_tag:
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", args.output_tag) is None:
+            raise ValueError("--output-tag must be filesystem safe")
+        scope = "{}_{}".format(scope, args.output_tag)
+    return scope
 
 
 def evaluate_one(args: argparse.Namespace, benchmark_name: str):
@@ -117,6 +137,7 @@ def evaluate_one(args: argparse.Namespace, benchmark_name: str):
         benchmark_name,
         cfg.algorithm,
         checkpoint_label(args.checkpoint),
+        evaluation_scope(args),
     )
     os.makedirs(output_dir, exist_ok=True)
     logger = build_experiment_logger(cfg, output_dir, asdict(cfg))
@@ -189,6 +210,7 @@ def main() -> None:
             args.suite,
             next(iter(reports.values()))["algorithm"],
             checkpoint_label(args.checkpoint),
+            evaluation_scope(args),
         )
         os.makedirs(suite_dir, exist_ok=True)
         suite_path = os.path.join(suite_dir, "report.json")

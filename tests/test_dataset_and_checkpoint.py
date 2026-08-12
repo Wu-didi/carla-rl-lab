@@ -88,6 +88,20 @@ class DatasetAndCheckpointTest(unittest.TestCase):
         dataset = OfflineDataset(arrays)
         self.assertEqual(dataset.arrays["states"].dtype, np.uint8)
 
+    def test_expert_only_load_skips_transition_arrays(self):
+        arrays = {
+            "states": np.zeros((2, 4), dtype=np.uint8),
+            "actions": np.zeros((2, 2), dtype=np.float32),
+            "rewards": np.zeros(2, dtype=np.float32),
+            "next_states": np.ones((2, 4), dtype=np.uint8),
+            "dones": np.zeros(2, dtype=np.float32),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "dataset.npz")
+            OfflineDataset(arrays).save(path)
+            dataset = OfflineDataset.load(path, require_transitions=False)
+        self.assertEqual(set(dataset.arrays), {"states", "actions"})
+
     def test_checkpoint_contains_config_and_bounded_history(self):
         cfg = checkpoint_config()
         agent = create_agent("sac", cfg)

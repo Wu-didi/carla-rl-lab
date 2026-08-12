@@ -93,6 +93,8 @@ class Config:
 
     # Imitation learning
     expert_dataset_path: str = ''
+    demo_pretrain_updates: int = 0
+    demo_bc_coef: float = 0.0
     discriminator_lr: float = 3e-4
     discriminator_updates: int = 1
     imitation_updates: int = 100_000

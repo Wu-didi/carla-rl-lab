@@ -308,6 +308,32 @@ class SacAgent(BaseAgent):
             logs["attention_img"] = mean_attention[None, None, :].cpu()
         return logs
 
+    def behavior_clone(
+        self, batch: Dict[str, Any], coefficient: float = 1.0
+    ) -> Dict[str, float]:
+        """Supervise the SAC mean action without hiding the actor architecture."""
+
+        if coefficient <= 0.0:
+            raise ValueError("behavior-cloning coefficient must be positive")
+        states = torch.as_tensor(
+            batch["states"], dtype=torch.float32, device=self.device
+        )
+        expert_actions = torch.as_tensor(
+            batch["actions"], dtype=torch.float32, device=self.device
+        )
+        predicted_actions = self.actor.deterministic(states)
+        bc_loss = F.mse_loss(predicted_actions, expert_actions)
+        self.actor_optimizer.zero_grad()
+        (float(coefficient) * bc_loss).backward()
+        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 10.0)
+        self.actor_optimizer.step()
+        return {
+            "bc_loss": float(bc_loss.item()),
+            "bc_action_mae": float(
+                F.l1_loss(predicted_actions, expert_actions).item()
+            ),
+        }
+
     def save(self, directory: str, step_id: Optional[Union[int, str]] = None) -> None:
         os.makedirs(directory, exist_ok=True)
         checkpoint_id = "last" if step_id is None else step_id

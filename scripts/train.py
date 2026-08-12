@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import sys
 import traceback
@@ -12,7 +13,7 @@ import numpy as np
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from carla_rl_lab.algorithms import create_agent, get_algorithm, list_algorithms
-from carla_rl_lab.buffers import ReplayBuffer
+from carla_rl_lab.buffers import OfflineDataset, ReplayBuffer
 from carla_rl_lab.benchmarks import apply_benchmark, get_benchmark, list_benchmarks
 from carla_rl_lab.config import Config
 from carla_rl_lab.envs import ACTION_MODES, make_carla_env
@@ -46,6 +47,41 @@ def make_agent(cfg: Config):
             "runner='off_policy'.".format(cfg.algorithm, spec.runner)
         )
     return create_agent(cfg.algorithm, cfg)
+
+
+def file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_expert_dataset(cfg: Config):
+    if not cfg.expert_dataset_path:
+        if cfg.demo_pretrain_updates > 0 or cfg.demo_bc_coef > 0.0:
+            raise ValueError(
+                "--expert-dataset is required when demonstration learning is enabled"
+            )
+        return None, None
+    if cfg.algorithm != "sac":
+        raise ValueError("online demonstration learning currently supports SAC only")
+    dataset = OfflineDataset.load(
+        cfg.expert_dataset_path, require_transitions=False, seed=cfg.seed
+    )
+    if dataset.state_dim != cfg.state_dim or dataset.action_dim != cfg.action_dim:
+        raise ValueError("expert dataset dimensions do not match Config")
+    action_mode = dataset.metadata.get("action_mode")
+    if action_mode and action_mode != cfg.action_mode:
+        raise ValueError("expert dataset action_mode does not match Config")
+    record = {
+        "path": os.path.relpath(
+            os.path.abspath(cfg.expert_dataset_path), project_root()
+        ),
+        "sha256": file_sha256(cfg.expert_dataset_path),
+        "metadata": dataset.metadata,
+    }
+    return dataset, record
 
 
 def select_action(agent: Any, cfg: Config, obs_vector: np.ndarray, replay_size: int):
@@ -109,6 +145,7 @@ def save_checkpoint(
     episode: int,
     env,
     replay_buffer: ReplayBuffer,
+    expert_dataset_record=None,
 ) -> None:
     trainer_state = {
         "episode": episode,
@@ -116,6 +153,8 @@ def save_checkpoint(
     }
     if cfg.checkpoint_replay_buffer:
         trainer_state["replay_buffer"] = replay_buffer.state_dict()
+    if expert_dataset_record is not None:
+        trainer_state["expert_dataset"] = expert_dataset_record
     save_training_checkpoint(
         agent, cfg, checkpoint_dir, global_step, trainer_state
     )
@@ -128,11 +167,16 @@ def train(cfg: Config) -> None:
         raise ValueError("checkpoint_interval must be positive")
     if cfg.max_step_retries <= 0:
         raise ValueError("max_step_retries must be positive")
+    if cfg.demo_pretrain_updates < 0:
+        raise ValueError("demo_pretrain_updates cannot be negative")
+    if cfg.demo_bc_coef < 0.0:
+        raise ValueError("demo_bc_coef cannot be negative")
     if cfg.require_clean_git and git_is_dirty(project_root()):
         raise RuntimeError(
             "Public runs require a clean git worktree; commit or stash changes first"
         )
     set_seed(cfg.seed)
+    expert_dataset, expert_dataset_record = load_expert_dataset(cfg)
     log_dir = runs_dir(cfg)
     os.makedirs(log_dir, exist_ok=True)
     logger = build_experiment_logger(cfg, log_dir, asdict(cfg))
@@ -149,6 +193,9 @@ def train(cfg: Config) -> None:
         agent = make_agent(cfg)
         replay_buffer = ReplayBuffer(cfg.buffer_size)
         start_episode = 0
+
+        if expert_dataset_record is not None:
+            logger.update_run_record({"expert_dataset": expert_dataset_record})
 
         if cfg.use_pretrained_model:
             if not os.path.isfile(cfg.pretrained_model_path):
@@ -169,6 +216,34 @@ def train(cfg: Config) -> None:
                     "will warm up again before updates resume."
                 )
             print("Loaded model {}".format(cfg.pretrained_model_path))
+
+        if cfg.demo_pretrain_updates > 0 and not cfg.use_pretrained_model:
+            print(
+                "Pretraining SAC actor from {} expert samples for {} updates".format(
+                    len(expert_dataset), cfg.demo_pretrain_updates
+                )
+            )
+            for update_index in range(1, cfg.demo_pretrain_updates + 1):
+                losses = agent.behavior_clone(
+                    expert_dataset.sample(
+                        cfg.batch_size, fields=("states", "actions")
+                    )
+                )
+                logger.log(
+                    {
+                        "pretrain/{}".format(name): float(value)
+                        for name, value in losses.items()
+                    },
+                    update_index,
+                )
+                if update_index % 500 == 0:
+                    print(
+                        "[Demo pretrain {}/{}] bc_loss={:.5f}".format(
+                            update_index,
+                            cfg.demo_pretrain_updates,
+                            losses["bc_loss"],
+                        )
+                    )
 
         checkpoint_dir = os.path.join(log_dir, "checkpoints")
         last_checkpoint_step = global_step
@@ -227,6 +302,19 @@ def train(cfg: Config) -> None:
                 ready_size = max(cfg.minimal_size, cfg.batch_size)
                 if replay_buffer.size() >= ready_size and cfg.train_every_step:
                     losses = agent.update(replay_buffer.sample(cfg.batch_size))
+                    if expert_dataset is not None and cfg.demo_bc_coef > 0.0:
+                        demo_losses = agent.behavior_clone(
+                            expert_dataset.sample(
+                                cfg.batch_size, fields=("states", "actions")
+                            ),
+                            coefficient=cfg.demo_bc_coef,
+                        )
+                        losses.update(
+                            {
+                                "demo_{}".format(name): value
+                                for name, value in demo_losses.items()
+                            }
+                        )
                     log_losses(
                         logger, losses, global_step, cfg.log_attention_image
                     )
@@ -247,6 +335,7 @@ def train(cfg: Config) -> None:
                         episode,
                         env,
                         replay_buffer,
+                        expert_dataset_record,
                     )
                     last_checkpoint_step = global_step
 
@@ -296,6 +385,7 @@ def train(cfg: Config) -> None:
                 last_episode,
                 env,
                 replay_buffer,
+                expert_dataset_record,
             )
         logger.finish(
             "completed", global_step=global_step, last_episode=last_episode
@@ -337,6 +427,11 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--buffer-size", type=int, default=None)
     parser.add_argument("--hidden-dim", type=int, default=None)
+    parser.add_argument(
+        "--expert-dataset", dest="expert_dataset_path", default=None
+    )
+    parser.add_argument("--demo-pretrain-updates", type=int, default=None)
+    parser.add_argument("--demo-bc-coef", type=float, default=None)
     parser.add_argument(
         "--vehicles", dest="number_of_vehicles", type=int, default=None
     )
@@ -419,6 +514,9 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         "batch_size",
         "buffer_size",
         "hidden_dim",
+        "expert_dataset_path",
+        "demo_pretrain_updates",
+        "demo_bc_coef",
         "number_of_vehicles",
         "number_of_walkers",
         "view_mode",

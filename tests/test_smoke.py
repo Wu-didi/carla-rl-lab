@@ -303,6 +303,9 @@ class CoreSmokeTest(unittest.TestCase):
         )
         logs = agent.update(batch)
         self.assertTrue(np.isfinite(logs["critic_1_loss"]))
+        demo_logs = agent.behavior_clone(batch, coefficient=0.5)
+        self.assertTrue(np.isfinite(demo_logs["bc_loss"]))
+        self.assertTrue(np.isfinite(demo_logs["bc_action_mae"]))
 
     def test_pixel_td3(self):
         state_dim = pixel_state_dim(32, 1, 4)

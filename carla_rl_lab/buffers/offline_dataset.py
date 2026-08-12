@@ -115,7 +115,14 @@ class OfflineDataset:
         seed: Optional[int] = None,
     ) -> "OfflineDataset":
         with np.load(path, allow_pickle=False) as source:
-            arrays = {name: source[name] for name in source.files}
+            selected = source.files
+            if not require_transitions:
+                selected = [
+                    name
+                    for name in ("states", "actions", "metadata_json")
+                    if name in source.files
+                ]
+            arrays = {name: source[name] for name in selected}
         return cls(arrays, require_transitions=require_transitions, seed=seed)
 
     def save(self, path: str) -> None:

@@ -120,6 +120,24 @@ class TrainingRunnerTest(unittest.TestCase):
         self.assertEqual(cfg.action_dim, 2)
         self.assertEqual(cfg.target_entropy, -2.0)
 
+    def test_online_demonstration_cli(self):
+        args = off_policy_runner.build_argparser().parse_args(
+            [
+                "--algo",
+                "sac",
+                "--expert-dataset",
+                "expert.npz",
+                "--demo-pretrain-updates",
+                "200",
+                "--demo-bc-coef",
+                "0.25",
+            ]
+        )
+        cfg = off_policy_runner.apply_overrides(Config(), args)
+        self.assertEqual(cfg.expert_dataset_path, "expert.npz")
+        self.assertEqual(cfg.demo_pretrain_updates, 200)
+        self.assertEqual(cfg.demo_bc_coef, 0.25)
+
     def test_on_policy_cli_overrides_same_config_instance(self):
         args = on_policy_runner.build_argparser().parse_args(
             [

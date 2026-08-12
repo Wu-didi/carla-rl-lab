@@ -630,6 +630,10 @@ class CarlaEnv(gym.Env):
 
     def step_sample(self):
         if self._expert_agent is not None:
+            if self._expert_agent.done():
+                destination = self._choose_destination(self.ego.get_location())
+                self._build_route(self.ego.get_location(), destination)
+                self._expert_agent.set_destination(destination)
             control = self._expert_agent.run_step()
             self.ego.apply_control(control)
         else:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import sys
 import traceback
@@ -27,7 +26,7 @@ from carla_rl_lab.utils import (
     save_training_checkpoint,
     set_seed,
 )
-from carla_rl_lab.utils.provenance import carla_versions, git_is_dirty
+from carla_rl_lab.utils.provenance import carla_versions, file_sha256, git_is_dirty
 
 
 def project_root() -> str:
@@ -47,14 +46,6 @@ def make_agent(cfg: Config):
             "runner='off_policy'.".format(cfg.algorithm, spec.runner)
         )
     return create_agent(cfg.algorithm, cfg)
-
-
-def file_sha256(path: str) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def load_expert_dataset(cfg: Config):

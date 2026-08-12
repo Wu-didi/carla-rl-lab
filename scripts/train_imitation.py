@@ -23,7 +23,7 @@ from carla_rl_lab.utils import (
     save_training_checkpoint,
     set_seed,
 )
-from carla_rl_lab.utils.provenance import carla_versions
+from carla_rl_lab.utils.provenance import carla_versions, file_sha256, git_is_dirty
 
 
 def imitation_algorithms():
@@ -229,6 +229,12 @@ def train(cfg: Config) -> None:
         raise ValueError("total_timesteps must be positive")
     if cfg.max_step_retries <= 0:
         raise ValueError("max_step_retries must be positive")
+    if cfg.require_clean_git and git_is_dirty(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ):
+        raise RuntimeError(
+            "Public runs require a clean git worktree; commit or stash changes first"
+        )
     set_seed(cfg.seed)
     dataset = OfflineDataset.load(
         cfg.expert_dataset_path,
@@ -254,11 +260,37 @@ def train(cfg: Config) -> None:
     print("[Config]", asdict(cfg))
     log_dir, checkpoint_dir = output_paths(cfg)
     logger = build_experiment_logger(cfg, log_dir, asdict(cfg))
+    dataset_record = {
+        "path": os.path.relpath(
+            os.path.abspath(cfg.expert_dataset_path),
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        ),
+        "sha256": file_sha256(cfg.expert_dataset_path),
+        "metadata": dataset.metadata,
+    }
+    logger.update_run_record(
+        {"status": "running", "expert_dataset": dataset_record}
+    )
     try:
         if cfg.algorithm == "bc":
             train_bc(cfg, dataset, logger, checkpoint_dir)
         else:
             train_adversarial(cfg, dataset, logger, checkpoint_dir)
+        logger.finish(
+            "completed",
+            global_step=(
+                cfg.imitation_updates
+                if cfg.algorithm == "bc"
+                else cfg.total_timesteps
+            ),
+        )
+    except BaseException as exc:
+        logger.finish(
+            "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed",
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        raise
     finally:
         logger.close()
 
@@ -297,6 +329,12 @@ def build_argparser() -> argparse.ArgumentParser:
         default=None,
     )
     parser.add_argument("--checkpoint", default="")
+    parser.add_argument(
+        "--require-clean-git",
+        action="store_true",
+        default=None,
+        help="Refuse to start when the git worktree has uncommitted changes",
+    )
     return parser
 
 

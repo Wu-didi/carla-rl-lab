@@ -247,7 +247,12 @@ class SacAgent(BaseAgent):
             self.actor.train()
         return action.cpu().numpy().reshape(-1).astype(np.float32)
 
-    def update(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+    def update(
+        self,
+        batch: Dict[str, Any],
+        expert_batch: Optional[Dict[str, Any]] = None,
+        bc_coef: float = 0.0,
+    ) -> Dict[str, Any]:
         states = torch.as_tensor(batch["states"], dtype=torch.float32, device=self.device)
         actions = torch.as_tensor(batch["actions"], dtype=torch.float32, device=self.device)
         rewards = torch.as_tensor(batch["rewards"], dtype=torch.float32, device=self.device).view(-1, 1)
@@ -280,7 +285,29 @@ class SacAgent(BaseAgent):
             self.critic_1(states, new_actions),
             self.critic_2(states, new_actions),
         )
-        actor_loss = (self.log_alpha.exp().detach() * log_prob - q_value).mean()
+        actor_rl_loss = (
+            self.log_alpha.exp().detach() * log_prob - q_value
+        ).mean()
+        actor_loss = actor_rl_loss
+        demo_bc_loss = None
+        demo_action_mae = None
+        if expert_batch is not None:
+            if bc_coef <= 0.0:
+                raise ValueError("bc_coef must be positive with an expert batch")
+            expert_states = torch.as_tensor(
+                expert_batch["states"], dtype=torch.float32, device=self.device
+            )
+            expert_actions = torch.as_tensor(
+                expert_batch["actions"], dtype=torch.float32, device=self.device
+            )
+            predicted_expert_actions = self.actor.deterministic(expert_states)
+            demo_bc_loss = F.mse_loss(
+                predicted_expert_actions, expert_actions
+            )
+            demo_action_mae = F.l1_loss(
+                predicted_expert_actions, expert_actions
+            )
+            actor_loss = actor_loss + float(bc_coef) * demo_bc_loss
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 10.0)
@@ -296,6 +323,7 @@ class SacAgent(BaseAgent):
 
         logs = {
             "actor_loss": actor_loss.item(),
+            "actor_rl_loss": actor_rl_loss.item(),
             "critic_1_loss": critic_1_loss.item(),
             "critic_2_loss": critic_2_loss.item(),
             "alpha_loss": alpha_loss.item(),
@@ -303,6 +331,9 @@ class SacAgent(BaseAgent):
             "avg_q": q_value.mean().item(),
             "entropy": -log_prob.mean().item(),
         }
+        if demo_bc_loss is not None and demo_action_mae is not None:
+            logs["demo_bc_loss"] = demo_bc_loss.item()
+            logs["demo_bc_action_mae"] = demo_action_mae.item()
         if attention is not None:
             mean_attention = attention.detach().mean(dim=0)
             logs["attention_img"] = mean_attention[None, None, :].cpu()

@@ -326,6 +326,10 @@ class CoreSmokeTest(unittest.TestCase):
         )
         logs = agent.update(batch)
         self.assertTrue(np.isfinite(logs["critic_1_loss"]))
+        demo_update_logs = agent.update(
+            batch, expert_batch=batch, bc_coef=0.25
+        )
+        self.assertTrue(np.isfinite(demo_update_logs["demo_bc_loss"]))
         demo_logs = agent.behavior_clone(batch, coefficient=0.5)
         self.assertTrue(np.isfinite(demo_logs["bc_loss"]))
         self.assertTrue(np.isfinite(demo_logs["bc_action_mae"]))

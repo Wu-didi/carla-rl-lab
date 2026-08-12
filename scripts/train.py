@@ -292,19 +292,17 @@ def train(cfg: Config) -> None:
 
                 ready_size = max(cfg.minimal_size, cfg.batch_size)
                 if replay_buffer.size() >= ready_size and cfg.train_every_step:
-                    losses = agent.update(replay_buffer.sample(cfg.batch_size))
                     if expert_dataset is not None and cfg.demo_bc_coef > 0.0:
-                        demo_losses = agent.behavior_clone(
-                            expert_dataset.sample(
+                        losses = agent.update(
+                            replay_buffer.sample(cfg.batch_size),
+                            expert_batch=expert_dataset.sample(
                                 cfg.batch_size, fields=("states", "actions")
                             ),
-                            coefficient=cfg.demo_bc_coef,
+                            bc_coef=cfg.demo_bc_coef,
                         )
-                        losses.update(
-                            {
-                                "demo_{}".format(name): value
-                                for name, value in demo_losses.items()
-                            }
+                    else:
+                        losses = agent.update(
+                            replay_buffer.sample(cfg.batch_size)
                         )
                     log_losses(
                         logger, losses, global_step, cfg.log_attention_image

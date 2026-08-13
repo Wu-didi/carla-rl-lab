@@ -156,6 +156,8 @@ def train(cfg: Config) -> None:
         raise ValueError("total_timesteps must be positive")
     if cfg.checkpoint_interval <= 0:
         raise ValueError("checkpoint_interval must be positive")
+    if cfg.checkpoint_keep <= 0:
+        raise ValueError("checkpoint_keep must be positive")
     if cfg.max_step_retries <= 0:
         raise ValueError("max_step_retries must be positive")
     if cfg.demo_pretrain_updates < 0:
@@ -429,6 +431,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--total-timesteps", type=int, default=None)
     parser.add_argument("--checkpoint-interval", type=int, default=None)
+    parser.add_argument("--checkpoint-keep", type=int, default=None)
     parser.add_argument("--minimal-size", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--buffer-size", type=int, default=None)
@@ -531,6 +534,7 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         "port",
         "total_timesteps",
         "checkpoint_interval",
+        "checkpoint_keep",
         "minimal_size",
         "batch_size",
         "buffer_size",

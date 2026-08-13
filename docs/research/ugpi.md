@@ -41,6 +41,7 @@ Enable it with:
 python scripts/train.py \
   --algo sac --network Pixel_SAC \
   --benchmark nocrash_train_regular_v0 \
+  --checkpoint-interval 2000 --checkpoint-keep 10 \
   --expert-dataset artifacts/datasets/rlfold_town01_regular_behavior_agent_seed0_10k.npz \
   --demo-pretrain-updates 5000 --demo-bc-coef 0.5 \
   --demo-bc-mode fixed --actor-update-mode confidence \

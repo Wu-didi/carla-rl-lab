@@ -109,6 +109,8 @@ class TrainingRunnerTest(unittest.TestCase):
                 "123",
                 "--checkpoint-interval",
                 "25",
+                "--checkpoint-keep",
+                "7",
                 "--minimal-size",
                 "8",
                 "--batch-size",
@@ -126,6 +128,7 @@ class TrainingRunnerTest(unittest.TestCase):
         cfg = off_policy_runner.apply_overrides(Config(), args)
         self.assertEqual(cfg.total_timesteps, 123)
         self.assertEqual(cfg.checkpoint_interval, 25)
+        self.assertEqual(cfg.checkpoint_keep, 7)
         self.assertEqual(cfg.number_of_vehicles, 0)
         self.assertEqual(cfg.hidden_dim, 32)
         self.assertEqual(cfg.action_dim, 2)

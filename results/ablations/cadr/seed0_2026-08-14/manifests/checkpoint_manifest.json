@@ -1,0 +1,33 @@
+{
+  "algorithm": "sac",
+  "checkpoints": [
+    {
+      "file": "sac_ckpt_12000.pt",
+      "global_step": 12000,
+      "sha256": "844682ecd18e94a7459c841051da1b7575bdfb4f5ca5034320b0e88336698e00"
+    },
+    {
+      "file": "sac_ckpt_14000.pt",
+      "global_step": 14000,
+      "sha256": "4023a4bc1ce4ab5825c6d692b751379cd6b530f2d10d04b809f9ba9ea19ba53b"
+    },
+    {
+      "file": "sac_ckpt_16000.pt",
+      "global_step": 16000,
+      "sha256": "82f4d9f2b4928fcd61912002bc27c3112c148b0914ca5e7e64d4ad020f6213f8"
+    },
+    {
+      "file": "sac_ckpt_18000.pt",
+      "global_step": 18000,
+      "sha256": "1aa6d42b2d0191146fdab2af8a9c5bfdbdc5593b38e81582576e01e1fd8b178d"
+    },
+    {
+      "file": "sac_ckpt_20000.pt",
+      "global_step": 20000,
+      "sha256": "71d91c42ebc70f830063218a1dbbdeb3d6d69c01b699cdfeab206a20926299c3"
+    }
+  ],
+  "format_version": 1,
+  "latest": "sac_ckpt_last.pt",
+  "updated_at": "2026-08-13T19:05:35Z"
+}

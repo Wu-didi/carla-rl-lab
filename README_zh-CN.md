@@ -362,9 +362,12 @@ python scripts/export_curves.py \
 | 指标和成功规则 | [`carla_rl_lab/evaluation/evaluator.py`](carla_rl_lab/evaluation/evaluator.py) |
 
 第一批 pilot 暴露出一个具体科研问题：SAC 和 TD3 都在早期达到峰值后退化，但训练
-return 仍为正。可选的 [CADR 研究原型](docs/research/cadr.md) 用保守专家优势和
-twin-critic 分歧自适应调整示范约束，研究其能否改善跨交通密度泛化。方法声明、指标、
-相关工作边界与预注册消融都在实验启动前写入文档。
+return 仍为正。[CADR 研究原型](docs/research/cadr.md) 已完成 seed-0 实验，四个
+候选 checkpoint 均只有 20% 成功率，低于固定 BC 基线的 60% 峰值。该负结果的
+逐回合报告、scalar 与曲线公开在
+[`results/ablations/cadr/`](results/ablations/cadr/)。后续的
+[UGPI 原型](docs/research/ugpi.md) 在两个无图像增强的 critic 判断不一致时，直接
+抑制 critic 驱动的 actor 更新；其方法和评测约束已在 CARLA 实验前完成预注册。
 
 新增 reward 应同时返回标量与命名分项。新增观测应建立新的协议名和 shape，不能悄悄
 改变 `pixel_v1` 的含义。

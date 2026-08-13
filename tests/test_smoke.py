@@ -10,7 +10,10 @@ import numpy as np
 import torch
 
 from carla_rl_lab.algorithms import create_agent, get_algorithm, list_algorithms
-from carla_rl_lab.algorithms.sac import adaptive_demonstration_weights
+from carla_rl_lab.algorithms.sac import (
+    adaptive_demonstration_weights,
+    uncertainty_confidence_weights,
+)
 from carla_rl_lab.benchmarks import (
     apply_benchmark,
     get_benchmark,
@@ -345,6 +348,15 @@ class CoreSmokeTest(unittest.TestCase):
         self.assertTrue(np.isfinite(adaptive_logs["demo_critic_disagreement"]))
         self.assertGreaterEqual(adaptive_logs["demo_bc_weight_min"], 0.1)
         self.assertLessEqual(adaptive_logs["demo_bc_weight_max"], 2.0)
+        agent.cfg.actor_update_mode = "confidence"
+        agent.cfg.actor_uncertainty_beta = 2.0
+        agent.cfg.actor_confidence_min = 0.1
+        confidence_logs = agent.update(
+            batch, expert_batch=batch, bc_coef=0.25
+        )
+        self.assertGreater(confidence_logs["actor_confidence_mean"], 0.0)
+        self.assertLessEqual(confidence_logs["actor_confidence_mean"], 1.0)
+        self.assertGreaterEqual(confidence_logs["actor_confidence_min"], 0.1)
         demo_logs = agent.behavior_clone(batch, coefficient=0.5)
         self.assertTrue(np.isfinite(demo_logs["bc_loss"]))
         self.assertTrue(np.isfinite(demo_logs["bc_action_mae"]))
@@ -360,6 +372,17 @@ class CoreSmokeTest(unittest.TestCase):
             weight_max=2.0,
         )
         self.assertTrue(torch.equal(weights, torch.ones_like(weights)))
+
+    def test_uncertainty_confidence_weight_has_standard_sac_neutral_point(self):
+        disagreement = torch.tensor([[0.0], [0.5], [10.0]])
+        weights = uncertainty_confidence_weights(
+            disagreement=disagreement,
+            beta=2.0,
+            confidence_min=0.1,
+        )
+        self.assertEqual(weights[0].item(), 1.0)
+        self.assertLess(weights[1].item(), 1.0)
+        self.assertAlmostEqual(weights[2].item(), 0.1, places=6)
 
     def test_pixel_td3(self):
         state_dim = pixel_state_dim(32, 1, 4)

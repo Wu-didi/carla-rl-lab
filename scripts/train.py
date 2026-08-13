@@ -172,6 +172,12 @@ def train(cfg: Config) -> None:
         raise ValueError("demo_uncertainty_beta cannot be negative")
     if not 0.0 <= cfg.demo_bc_weight_min <= cfg.demo_bc_weight_max:
         raise ValueError("invalid adaptive demonstration weight bounds")
+    if cfg.actor_update_mode not in ("standard", "confidence"):
+        raise ValueError("actor_update_mode must be 'standard' or 'confidence'")
+    if cfg.actor_uncertainty_beta < 0.0:
+        raise ValueError("actor_uncertainty_beta cannot be negative")
+    if not 0.0 <= cfg.actor_confidence_min <= 1.0:
+        raise ValueError("actor_confidence_min must be in [0, 1]")
     if cfg.require_clean_git and git_is_dirty(project_root()):
         raise RuntimeError(
             "Public runs require a clean git worktree; commit or stash changes first"
@@ -441,6 +447,13 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--demo-bc-weight-min", type=float, default=None)
     parser.add_argument("--demo-bc-weight-max", type=float, default=None)
     parser.add_argument(
+        "--actor-update-mode",
+        choices=["standard", "confidence"],
+        default=None,
+    )
+    parser.add_argument("--actor-uncertainty-beta", type=float, default=None)
+    parser.add_argument("--actor-confidence-min", type=float, default=None)
+    parser.add_argument(
         "--vehicles", dest="number_of_vehicles", type=int, default=None
     )
     parser.add_argument(
@@ -531,6 +544,9 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         "demo_uncertainty_beta",
         "demo_bc_weight_min",
         "demo_bc_weight_max",
+        "actor_update_mode",
+        "actor_uncertainty_beta",
+        "actor_confidence_min",
         "number_of_vehicles",
         "number_of_walkers",
         "view_mode",

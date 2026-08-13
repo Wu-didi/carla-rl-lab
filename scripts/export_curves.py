@@ -182,6 +182,60 @@ def plot_losses(
     return True
 
 
+def plot_diagnostics(
+    path: str,
+    scalars: Dict[str, List[ScalarPoint]],
+    window: int,
+    title: str,
+) -> bool:
+    diagnostic_tags = [
+        tag
+        for tag in (
+            "train/critic_disagreement",
+            "train/demo_critic_disagreement",
+            "train/demo_expert_advantage",
+            "train/demo_bc_weight_mean",
+            "train/demo_expert_preferred_rate",
+            "train/actor_normalized_disagreement",
+            "train/actor_confidence_mean",
+        )
+        if tag in scalars
+    ]
+    if not diagnostic_tags:
+        return False
+    colors = ("#2563eb", "#dc2626", "#059669", "#d97706", "#7c3aed")
+    column_count = 2
+    row_count = int(math.ceil(len(diagnostic_tags) / float(column_count)))
+    figure, axes = plt.subplots(
+        row_count,
+        column_count,
+        figsize=(10.0, 3.2 * row_count),
+        dpi=160,
+        squeeze=False,
+    )
+    for index, tag in enumerate(diagnostic_tags):
+        axis = axes[index // column_count][index % column_count]
+        points = scalars[tag]
+        steps = [point[0] for point in points]
+        values = [point[2] for point in points]
+        smooth_steps, smooth_values = moving_average(steps, values, window)
+        color = colors[index % len(colors)]
+        axis.plot(steps, values, color=color, linewidth=0.5, alpha=0.12)
+        axis.plot(smooth_steps, smooth_values, color=color, linewidth=1.8)
+        axis.axhline(0.0, color="#111827", linewidth=0.7, alpha=0.4)
+        axis.set_title(tag.split("/", 1)[-1])
+        axis.set_xlabel("Training step")
+        axis.ticklabel_format(style="plain", axis="x", useOffset=False)
+        axis.grid(True, color="#e5e7eb", linewidth=0.7)
+    for index in range(len(diagnostic_tags), row_count * column_count):
+        axes[index // column_count][index % column_count].axis("off")
+    figure.suptitle(title or "Training diagnostics", fontsize=14)
+    figure.tight_layout(rect=(0.0, 0.0, 1.0, 0.96))
+    figure.savefig(path, bbox_inches="tight")
+    plt.close(figure)
+    return True
+
+
 def read_json(path: str) -> Dict[str, Any]:
     with open(path, "r") as source:
         return json.load(source)
@@ -264,6 +318,12 @@ def main() -> None:
         scalars,
         args.window,
         "{} training losses".format(args.title).strip(),
+    )
+    plot_diagnostics(
+        os.path.join(args.output_dir, "training_diagnostics.png"),
+        scalars,
+        args.window,
+        "{} training diagnostics".format(args.title).strip(),
     )
     summary = result_summary(args.run_dir, scalars, args.benchmark_report)
     summary_path = os.path.join(args.output_dir, "result.json")

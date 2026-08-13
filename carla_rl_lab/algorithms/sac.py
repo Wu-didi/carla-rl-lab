@@ -228,6 +228,18 @@ def adaptive_demonstration_weights(
     ).clamp(min=weight_min, max=weight_max)
 
 
+def uncertainty_confidence_weights(
+    disagreement: torch.Tensor,
+    beta: float,
+    confidence_min: float,
+) -> torch.Tensor:
+    """Map normalized twin-critic disagreement to detached actor confidence."""
+
+    return torch.exp(-float(beta) * disagreement).clamp(
+        min=float(confidence_min), max=1.0
+    )
+
+
 class SacAgent(BaseAgent):
     """Readable Soft Actor-Critic implementation for continuous CARLA control."""
 
@@ -304,9 +316,36 @@ class SacAgent(BaseAgent):
         policy_q_1 = self.critic_1(states, new_actions)
         policy_q_2 = self.critic_2(states, new_actions)
         q_value = torch.min(policy_q_1, policy_q_2)
-        actor_rl_loss = (
-            self.log_alpha.exp().detach() * log_prob - q_value
-        ).mean()
+        actor_entropy_term = self.log_alpha.exp().detach() * log_prob
+        actor_confidence = torch.ones_like(actor_entropy_term)
+        normalized_actor_disagreement = torch.zeros_like(actor_entropy_term)
+        actor_update_mode = getattr(self.cfg, "actor_update_mode", "standard")
+        if actor_update_mode == "confidence":
+            critic_training = (self.critic_1.training, self.critic_2.training)
+            self.critic_1.eval()
+            self.critic_2.eval()
+            with torch.no_grad():
+                confidence_q_1 = self.critic_1(states, new_actions.detach())
+                confidence_q_2 = self.critic_2(states, new_actions.detach())
+                confidence_q_scale = 1.0 + 0.5 * (
+                    confidence_q_1.abs() + confidence_q_2.abs()
+                )
+                normalized_actor_disagreement = (
+                    confidence_q_1 - confidence_q_2
+                ).abs() / confidence_q_scale
+                actor_confidence = uncertainty_confidence_weights(
+                    normalized_actor_disagreement,
+                    beta=float(getattr(self.cfg, "actor_uncertainty_beta", 2.0)),
+                    confidence_min=float(
+                        getattr(self.cfg, "actor_confidence_min", 0.1)
+                    ),
+                )
+            self.critic_1.train(critic_training[0])
+            self.critic_2.train(critic_training[1])
+        elif actor_update_mode != "standard":
+            raise ValueError("actor_update_mode must be 'standard' or 'confidence'")
+        actor_rl_loss_unweighted = (actor_entropy_term - q_value).mean()
+        actor_rl_loss = (actor_entropy_term - actor_confidence * q_value).mean()
         actor_loss = actor_rl_loss
         demo_bc_loss = None
         demo_action_mae = None
@@ -410,6 +449,12 @@ class SacAgent(BaseAgent):
         logs = {
             "actor_loss": actor_loss.item(),
             "actor_rl_loss": actor_rl_loss.item(),
+            "actor_rl_loss_unweighted": actor_rl_loss_unweighted.item(),
+            "actor_confidence_mean": actor_confidence.mean().item(),
+            "actor_confidence_min": actor_confidence.min().item(),
+            "actor_normalized_disagreement": (
+                normalized_actor_disagreement.mean().item()
+            ),
             "critic_1_loss": critic_1_loss.item(),
             "critic_2_loss": critic_2_loss.item(),
             "alpha_loss": alpha_loss.item(),

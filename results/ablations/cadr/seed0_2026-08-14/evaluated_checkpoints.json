@@ -1,0 +1,50 @@
+{
+  "algorithm": "sac",
+  "source_commit": "6f725c3731414c7a5cb3ab6a1312237c1ab61061",
+  "dataset_sha256": "aa39eb1f06341574c6c7dc693cfb8265014db21fb1da4b7f5e9b604c71ace9de",
+  "selector": {
+    "benchmark": "nocrash_empty_v0",
+    "routes": 5,
+    "weathers": 2,
+    "episodes": 10
+  },
+  "checkpoints": [
+    {
+      "step": 8000,
+      "sha256": "72ca2c60cb4fc34a7ccee0589c82af02249eeb7bb5863d8f57a64fef82a9f7b7",
+      "success_rate": 0.2,
+      "route_completion_mean": 0.32519280910491943,
+      "collision_rate": 0.4,
+      "off_road_rate": 0.5
+    },
+    {
+      "step": 12000,
+      "sha256": "844682ecd18e94a7459c841051da1b7575bdfb4f5ca5034320b0e88336698e00",
+      "success_rate": 0.2,
+      "route_completion_mean": 0.5457032322883606,
+      "collision_rate": 0.4,
+      "off_road_rate": 0.6
+    },
+    {
+      "step": 16000,
+      "sha256": "82f4d9f2b4928fcd61912002bc27c3112c148b0914ca5e7e64d4ad020f6213f8",
+      "success_rate": 0.2,
+      "route_completion_mean": 0.3309153914451599,
+      "collision_rate": 0.4,
+      "off_road_rate": 0.4
+    },
+    {
+      "step": 20000,
+      "sha256": "71d91c42ebc70f830063218a1dbbdeb3d6d69c01b699cdfeab206a20926299c3",
+      "success_rate": 0.2,
+      "route_completion_mean": 0.5064703226089478,
+      "collision_rate": 0.4,
+      "off_road_rate": 0.6
+    }
+  ],
+  "selection": {
+    "step": 12000,
+    "rule": "success descending, route completion descending",
+    "use": "diagnostic only; the method configuration is rejected"
+  }
+}

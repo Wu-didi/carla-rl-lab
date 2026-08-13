@@ -1,7 +1,7 @@
 # CADR Research Prototype
 
 **Working name:** Confidence-Adaptive Demonstration Regularization (CADR).
-**Status:** implemented and unit-tested; CARLA ablation pending.
+**Status:** seed-0 CARLA pilot completed; current configuration rejected.
 **Claim boundary:** research hypothesis, not a novel-method or performance
 claim until literature review and multi-seed experiments are complete.
 
@@ -101,6 +101,27 @@ is run only after selecting on the limited grid.
 
 At least seeds 0/1/2 are required before drawing a method conclusion. Report
 all arms even if CADR underperforms.
+
+## Seed-0 Result
+
+The corrected full CADR arm completed 20k online steps and was evaluated at
+8k, 12k, 16k, and 20k on the same 10-episode selector used by fixed-BC SAC.
+
+| Step | Success | Route completion | Collision | Off-road |
+| ---: | ---: | ---: | ---: | ---: |
+| 8k | 20% | 32.5% | 40% | 50% |
+| 12k | 20% | 54.6% | 40% | 60% |
+| 16k | 20% | 33.1% | 40% | 40% |
+| 20k | 20% | 50.6% | 40% | 60% |
+
+The fixed-BC baseline reached 60% at 8k, so this CADR configuration did not
+improve the primary endpoint. Online critic disagreement rose from 0.011 to
+1.535 and the demonstration weight rose from 1.008 to 1.303, while success
+remained flat. A plausible failure mode is that critic disagreement is not a
+calibrated reason to increase BC and, for pixel critics, training-time random
+image shifts can contaminate a direct critic comparison. The next controlled
+prototype, [UGPI](ugpi.md), evaluates both critics without augmentation for
+the confidence estimate and gates the critic-driven actor update directly.
 
 ## Related Work Boundary
 

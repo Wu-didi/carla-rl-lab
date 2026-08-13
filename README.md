@@ -385,10 +385,13 @@ python scripts/export_curves.py \
 
 The first pilot exposed a concrete research problem: SAC and TD3 peaked early
 and then regressed while training return remained positive. The optional
-[CADR prototype](docs/research/cadr.md) tests whether conservative expert
-advantage plus twin-critic disagreement can adapt the demonstration constraint
-and improve traffic-density transfer. Its claim, metrics, related-work boundary,
-and preregistered ablation are documented before running the experiment.
+[CADR prototype](docs/research/cadr.md) tested adaptive demonstration weighting,
+but all four seed-0 selector checkpoints reached only 20% success versus the
+fixed-BC baseline's 60% peak. The negative result, raw reports, scalars, and
+curves are published under [`results/ablations/cadr/`](results/ablations/cadr/).
+The follow-up [UGPI prototype](docs/research/ugpi.md) directly suppresses
+critic-driven actor updates when augmentation-free twin critics disagree; its
+method and evaluation contract are preregistered before the CARLA run.
 
 New reward functions should return both a scalar and named terms. New
 observation versions should receive a new protocol name and state shape instead

@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import unittest
+import os
+import tempfile
 
 import numpy as np
 
-from scripts.export_curves import moving_average, sampled_points, scalar_summary
+from scripts.export_curves import (
+    moving_average,
+    plot_diagnostics,
+    sampled_points,
+    scalar_summary,
+)
 
 
 class ExportCurvesTest(unittest.TestCase):
@@ -26,6 +33,19 @@ class ExportCurvesTest(unittest.TestCase):
         self.assertEqual(len(sampled), 4)
         self.assertEqual(sampled[0], points[0])
         self.assertEqual(sampled[-1], points[-1])
+
+    def test_diagnostics_plot_requires_supported_scalar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = os.path.join(directory, "diagnostics.png")
+            self.assertFalse(plot_diagnostics(output, {}, 10, "test"))
+            scalars = {
+                "train/actor_confidence_mean": [
+                    (1, 0.0, 1.0),
+                    (2, 1.0, 0.8),
+                ]
+            }
+            self.assertTrue(plot_diagnostics(output, scalars, 2, "test"))
+            self.assertTrue(os.path.isfile(output))
 
 
 if __name__ == "__main__":

@@ -150,6 +150,12 @@ class TrainingRunnerTest(unittest.TestCase):
                 "0.5",
                 "--demo-uncertainty-beta",
                 "0.75",
+                "--actor-update-mode",
+                "confidence",
+                "--actor-uncertainty-beta",
+                "3.0",
+                "--actor-confidence-min",
+                "0.2",
             ]
         )
         cfg = off_policy_runner.apply_overrides(Config(), args)
@@ -160,6 +166,9 @@ class TrainingRunnerTest(unittest.TestCase):
         self.assertEqual(cfg.demo_q_temperature, 0.2)
         self.assertEqual(cfg.demo_advantage_beta, 0.5)
         self.assertEqual(cfg.demo_uncertainty_beta, 0.75)
+        self.assertEqual(cfg.actor_update_mode, "confidence")
+        self.assertEqual(cfg.actor_uncertainty_beta, 3.0)
+        self.assertEqual(cfg.actor_confidence_min, 0.2)
 
     def test_on_policy_cli_overrides_same_config_instance(self):
         args = on_policy_runner.build_argparser().parse_args(

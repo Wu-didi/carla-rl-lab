@@ -101,6 +101,9 @@ class Config:
     demo_uncertainty_beta: float = 1.0
     demo_bc_weight_min: float = 0.1
     demo_bc_weight_max: float = 2.0
+    actor_update_mode: str = 'standard'
+    actor_uncertainty_beta: float = 2.0
+    actor_confidence_min: float = 0.1
     discriminator_lr: float = 3e-4
     discriminator_updates: int = 1
     imitation_updates: int = 100_000

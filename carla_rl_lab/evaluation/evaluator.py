@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional
 
 import numpy as np
 
@@ -125,6 +125,8 @@ def evaluate_benchmark(
     logger: Optional[ExperimentLogger] = None,
     route_limit: int = 0,
     weather_limit: int = 0,
+    initial_results: Optional[List[Dict[str, Any]]] = None,
+    progress_callback: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
 ) -> Dict[str, Any]:
     benchmark = get_benchmark(benchmark_name)
     env_overrides = benchmark["env_overrides"]
@@ -149,8 +151,24 @@ def evaluate_benchmark(
                         int(seed) * 100000 + weather_index * 1000 + int(route_id)
                     )
                     tasks.append((seed, episode_seed, route_id, weather))
-    results = []
-    for episode_index, (seed, episode_seed, route_id, weather) in enumerate(tasks):
+    results = list(initial_results or [])
+    if len(results) > len(tasks):
+        raise ValueError("resume data contains more episodes than the benchmark")
+    for index, result in enumerate(results):
+        expected = tasks[index]
+        actual = (
+            result.get("seed"),
+            result.get("episode_seed"),
+            result.get("route_id"),
+            result.get("weather"),
+        )
+        if actual != expected:
+            raise ValueError(
+                "resume episode {} does not match benchmark task".format(index)
+            )
+
+    for episode_index in range(len(results), len(tasks)):
+        seed, episode_seed, route_id, weather = tasks[episode_index]
         set_seed(episode_seed)
         if hasattr(env, "seed"):
             env.seed(episode_seed)
@@ -231,6 +249,8 @@ def evaluate_benchmark(
             "success": success,
         }
         results.append(result)
+        if progress_callback is not None:
+            progress_callback(list(results))
         print(
             "[Eval {:03d}/{:03d}] route={} weather={} success={} reason={}".format(
                 episode_index + 1,

@@ -31,6 +31,12 @@ class EvaluateCliTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "filesystem safe"):
             evaluate.evaluation_scope(args)
 
+    def test_resume_flag(self):
+        args = evaluate.build_argparser().parse_args(
+            ["--checkpoint", "model.pt", "--resume"]
+        )
+        self.assertTrue(args.resume)
+
 
 if __name__ == "__main__":
     unittest.main()

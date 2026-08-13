@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from dataclasses import asdict
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -72,6 +73,11 @@ def build_argparser() -> argparse.ArgumentParser:
         default="",
         help="Optional filesystem-safe label appended to the evaluation scope",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from the scope's atomically saved progress.json",
+    )
     return parser
 
 
@@ -104,6 +110,33 @@ def evaluation_scope(args: argparse.Namespace) -> str:
             raise ValueError("--output-tag must be filesystem safe")
         scope = "{}_{}".format(scope, args.output_tag)
     return scope
+
+
+def write_json_atomic(path: str, payload) -> None:
+    descriptor, temporary_path = tempfile.mkstemp(
+        prefix=".evaluation-", suffix=".tmp", dir=os.path.dirname(path)
+    )
+    try:
+        with os.fdopen(descriptor, "w") as output:
+            json.dump(payload, output, indent=2)
+            output.write("\n")
+        os.replace(temporary_path, path)
+    finally:
+        if os.path.exists(temporary_path):
+            os.unlink(temporary_path)
+
+
+def load_resume_episodes(path: str, identity):
+    if not os.path.isfile(path):
+        raise FileNotFoundError("No evaluation progress found: {}".format(path))
+    with open(path, "r") as source:
+        progress = json.load(source)
+    for name, expected in identity.items():
+        if progress.get(name) != expected:
+            raise ValueError(
+                "resume progress {} does not match current evaluation".format(name)
+            )
+    return list(progress.get("episodes", []))
 
 
 def evaluate_one(args: argparse.Namespace, benchmark_name: str):
@@ -141,13 +174,39 @@ def evaluate_one(args: argparse.Namespace, benchmark_name: str):
     )
     os.makedirs(output_dir, exist_ok=True)
     logger = build_experiment_logger(cfg, output_dir, asdict(cfg))
+    checkpoint = checkpoint_report(args.checkpoint)
+    progress_path = os.path.join(output_dir, "progress.json")
+    identity = {
+        "benchmark": benchmark_name,
+        "algorithm": cfg.algorithm,
+        "checkpoint_sha256": checkpoint["sha256"],
+        "scope": evaluation_scope(args),
+    }
+    initial_results = (
+        load_resume_episodes(progress_path, identity) if args.resume else []
+    )
+
+    def save_progress(episodes, status="evaluating"):
+        payload = dict(identity)
+        payload.update(
+            {
+                "schema_version": 1,
+                "status": status,
+                "completed_episodes": len(episodes),
+                "episodes": episodes,
+            }
+        )
+        write_json_atomic(progress_path, payload)
 
     env = None
     try:
         env = make_carla_env(cfg)
-        logger.update_run_record({"status": "evaluating"})
+        logger.update_run_record(
+            {"status": "evaluating", "resumed_episodes": len(initial_results)}
+        )
         agent = create_agent(cfg.algorithm, cfg)
         agent.load(args.checkpoint)
+        save_progress(initial_results)
         report = evaluate_benchmark(
             benchmark["name"],
             env,
@@ -157,12 +216,14 @@ def evaluate_one(args: argparse.Namespace, benchmark_name: str):
             logger=logger,
             route_limit=args.routes,
             weather_limit=args.weathers,
+            initial_results=initial_results,
+            progress_callback=save_progress,
         )
         report["algorithm"] = cfg.algorithm
-        report["checkpoint"] = checkpoint_report(args.checkpoint)
+        report["checkpoint"] = checkpoint
         report_path = os.path.join(output_dir, "report.json")
-        with open(report_path, "w") as report_file:
-            json.dump(report, report_file, indent=2)
+        write_json_atomic(report_path, report)
+        save_progress(report["episodes"], status="completed")
         print(json.dumps(report["summary"], indent=2))
         print("Benchmark report -> {}".format(report_path))
         logger.finish(
@@ -173,6 +234,18 @@ def evaluate_one(args: argparse.Namespace, benchmark_name: str):
         )
         return report
     except BaseException as exc:
+        if os.path.isfile(progress_path):
+            try:
+                with open(progress_path, "r") as source:
+                    progress = json.load(source)
+                progress["status"] = (
+                    "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
+                )
+                progress["error_type"] = type(exc).__name__
+                progress["error"] = str(exc)
+                write_json_atomic(progress_path, progress)
+            except Exception:
+                pass
         logger.finish(
             "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed",
             benchmark=benchmark_name,

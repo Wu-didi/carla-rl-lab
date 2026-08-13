@@ -509,6 +509,21 @@ class CoreSmokeTest(unittest.TestCase):
         suite_summary = summarize_suite({"first": report, "second": report})
         self.assertEqual(suite_summary["suite/success_rate"], 0.0)
 
+        resumed_env = FakeEnv()
+        progress_lengths = []
+        resumed = evaluate_benchmark(
+            spec["name"],
+            resumed_env,
+            FakeAgent(),
+            seeds=(0, 1),
+            expected_dim=pixel_state_dim(8, 1, 2),
+            initial_results=report["episodes"][:1],
+            progress_callback=lambda results: progress_lengths.append(len(results)),
+        )
+        self.assertEqual(resumed_env.seed_calls, [1])
+        self.assertEqual(progress_lengths, [2])
+        self.assertEqual(resumed["episodes"], report["episodes"])
+
     def test_rlfold_protocol_uses_front_rgb_and_nocrash_success(self):
         train_spec = get_benchmark("nocrash_train_v0")
         train_cfg = apply_benchmark(Config(), train_spec)

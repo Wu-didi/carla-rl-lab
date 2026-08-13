@@ -7,8 +7,10 @@ import unittest
 from types import SimpleNamespace
 
 import numpy as np
+import torch
 
 from carla_rl_lab.algorithms import create_agent, get_algorithm, list_algorithms
+from carla_rl_lab.algorithms.sac import adaptive_demonstration_weights
 from carla_rl_lab.benchmarks import (
     apply_benchmark,
     get_benchmark,
@@ -346,6 +348,18 @@ class CoreSmokeTest(unittest.TestCase):
         demo_logs = agent.behavior_clone(batch, coefficient=0.5)
         self.assertTrue(np.isfinite(demo_logs["bc_loss"]))
         self.assertTrue(np.isfinite(demo_logs["bc_action_mae"]))
+
+    def test_adaptive_demonstration_weight_has_fixed_bc_neutral_point(self):
+        weights = adaptive_demonstration_weights(
+            advantage=torch.zeros(3, 1),
+            disagreement=torch.zeros(3, 1),
+            temperature=0.1,
+            advantage_beta=1.0,
+            uncertainty_beta=1.0,
+            weight_min=0.1,
+            weight_max=2.0,
+        )
+        self.assertTrue(torch.equal(weights, torch.ones_like(weights)))
 
     def test_pixel_td3(self):
         state_dim = pixel_state_dim(32, 1, 4)

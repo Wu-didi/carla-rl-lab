@@ -209,6 +209,25 @@ def soft_update(source: nn.Module, target: nn.Module, tau: float) -> None:
         target_param.data.copy_(target_param.data * (1.0 - tau) + source_param.data * tau)
 
 
+def adaptive_demonstration_weights(
+    advantage: torch.Tensor,
+    disagreement: torch.Tensor,
+    temperature: float,
+    advantage_beta: float,
+    uncertainty_beta: float,
+    weight_min: float,
+    weight_max: float,
+) -> torch.Tensor:
+    """Return detached per-state BC weights with a fixed-BC neutral point."""
+
+    advantage_gate = 2.0 * torch.sigmoid(advantage / max(temperature, 1e-6))
+    uncertainty_gate = 1.0 - torch.exp(-disagreement)
+    return (
+        advantage_beta * advantage_gate
+        + uncertainty_beta * uncertainty_gate
+    ).clamp(min=weight_min, max=weight_max)
+
+
 class SacAgent(BaseAgent):
     """Readable Soft Actor-Critic implementation for continuous CARLA control."""
 
@@ -338,26 +357,22 @@ class SacAgent(BaseAgent):
                         (expert_q_1 - expert_q_2).abs(),
                         (policy_expert_q_1 - policy_expert_q_2).abs(),
                     ) / q_scale
-                    temperature = max(
-                        float(getattr(self.cfg, "demo_q_temperature", 0.1)),
-                        1e-6,
-                    )
-                    advantage_gate = torch.sigmoid(
-                        normalized_advantage / temperature
-                    )
-                    uncertainty_gate = 1.0 - torch.exp(
-                        -normalized_disagreement
-                    )
-                    bc_weights = float(
-                        getattr(self.cfg, "demo_advantage_beta", 1.0)
-                    ) * advantage_gate + float(
-                        getattr(self.cfg, "demo_uncertainty_beta", 1.0)
-                    ) * uncertainty_gate
-                    bc_weights = bc_weights.clamp(
-                        min=float(
+                    bc_weights = adaptive_demonstration_weights(
+                        normalized_advantage,
+                        normalized_disagreement,
+                        temperature=float(
+                            getattr(self.cfg, "demo_q_temperature", 0.1)
+                        ),
+                        advantage_beta=float(
+                            getattr(self.cfg, "demo_advantage_beta", 1.0)
+                        ),
+                        uncertainty_beta=float(
+                            getattr(self.cfg, "demo_uncertainty_beta", 1.0)
+                        ),
+                        weight_min=float(
                             getattr(self.cfg, "demo_bc_weight_min", 0.1)
                         ),
-                        max=float(
+                        weight_max=float(
                             getattr(self.cfg, "demo_bc_weight_max", 2.0)
                         ),
                     )

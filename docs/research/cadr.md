@@ -32,7 +32,7 @@ A_E         = [Q_min(s, a_E) - Q_min(s, a_pi)] / Q_scale
 U           = max(|Q1(s, a_E) - Q2(s, a_E)|,
                   |Q1(s, a_pi) - Q2(s, a_pi)|) / Q_scale
 Q_scale     = 1 + mean(|Q1_E|, |Q2_E|, |Q1_pi|, |Q2_pi|)
-w           = clip(beta_A * sigmoid(A_E / T)
+w           = clip(beta_A * 2 * sigmoid(A_E / T)
                    + beta_U * [1 - exp(-U)], w_min, w_max)
 L_actor     = L_SAC + lambda * mean[w * ||a_pi - a_E||^2]
 ```
@@ -40,8 +40,10 @@ L_actor     = L_SAC + lambda * mean[w * ||a_pi - a_E||^2]
 The advantage gate emphasizes expert actions that the critics currently rank
 above the policy. The disagreement gate retains an expert anchor where that
 ranking is unreliable. `Q_scale` makes both signals less sensitive to critic
-magnitude drift. Critic values are detached, so CADR only changes the actor
-regularizer and remains a small modification to ordinary SAC.
+magnitude drift. The factor `2` makes a neutral advantage produce weight `1`,
+matching fixed BC rather than silently reducing its scale. Critic values are
+detached, so CADR only changes the actor regularizer and remains a small
+modification to ordinary SAC.
 
 Defaults:
 

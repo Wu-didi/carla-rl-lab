@@ -382,6 +382,7 @@ class CarlaEnv(gym.Env):
         walker_blueprints = list(library.filter("walker.pedestrian.*"))
         controller_blueprint = library.find("controller.ai.walker")
         attempts = 0
+        controller_speeds = []
         while (
             len(self.spawned_walkers) < requested_walkers
             and attempts < self.max_walker_spawn_attempts
@@ -406,11 +407,18 @@ class CarlaEnv(gym.Env):
                 continue
             self.spawned_walkers.append(walker)
             self.walker_controllers.append(controller)
+            controller_speeds.append(1.0 + self._python_random.random())
+
+        # CARLA requires one world tick before newly attached AI controllers
+        # receive commands; issuing them immediately can crash PythonAPI 0.9.15.
+        if self.walker_controllers:
+            self.world.tick()
+        for controller, speed in zip(self.walker_controllers, controller_speeds):
             controller.start()
             destination = self.world.get_random_location_from_navigation()
             if destination is not None:
                 controller.go_to_location(destination)
-            controller.set_max_speed(1.0 + self._python_random.random())
+            controller.set_max_speed(speed)
         if len(self.spawned_walkers) < requested_walkers:
             warnings.warn(
                 "Spawned {}/{} requested walkers".format(

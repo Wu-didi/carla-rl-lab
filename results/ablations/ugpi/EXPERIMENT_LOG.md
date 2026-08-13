@@ -45,6 +45,7 @@ python scripts/train.py \
 | --- | --- | --- | ---: | --- | --- |
 | 2026-08-14 | `rlfold_town01_regular_pixel_sac_ugpi_seed0_20k_20260814` | `3943c36` | 0 | invalid | CARLA 0.9.15 PythonAPI segmentation fault in `WalkerAIController.go_to_location` during the first reset after BC pretraining. No online method update occurred. |
 | 2026-08-14 | `rlfold_town01_regular_pixel_sac_ugpi_seed0_20k_retry1_20260814` | `3943c36` | 20,000 | incomplete | Training completed, but the default bounded checkpoint retention deleted 8k before selection. Diagnostic selector results were 60% at 12k, 30% at 16k, and 40% at 20k. These cannot replace the preregistered four-checkpoint run. |
+| 2026-08-14 | `rlfold_town01_regular_pixel_sac_ugpi_seed0_20k_retry2_20260814` | `7283d92` | 0 | invalid | Repeated the CARLA 0.9.15 segmentation fault at `WalkerAIController.go_to_location`. The environment issued controller commands before a world tick, unlike CARLA's official traffic example. No online method update occurred. |
 
 The completed incomplete run is promising but not the primary result. Relative
 to fixed BC, success changed from 10%/0%/0% to 60%/30%/40% at 12k/16k/20k;

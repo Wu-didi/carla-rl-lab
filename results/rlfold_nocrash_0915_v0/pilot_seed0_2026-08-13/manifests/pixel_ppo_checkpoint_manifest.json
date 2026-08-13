@@ -1,0 +1,38 @@
+{
+  "algorithm": "ppo",
+  "selected": {
+    "file": "ppo_ckpt_20000.pt",
+    "global_step": 20000,
+    "sha256": "b03859ca2aa5d2679313d0b2f046747b6967de0708543bc5ccc5117b89b0149c"
+  },
+  "checkpoints": [
+    {
+      "file": "ppo_ckpt_4096.pt",
+      "global_step": 4096,
+      "sha256": "352a652c22bb64b6e3e0be6ab73e2c1a1678a6c498ff1d9eeb38424ec825357f"
+    },
+    {
+      "file": "ppo_ckpt_8192.pt",
+      "global_step": 8192,
+      "sha256": "dd09dc25b38ac2c939a11353cf1edcd5846054778df80f06f7ead924c17a8099"
+    },
+    {
+      "file": "ppo_ckpt_12288.pt",
+      "global_step": 12288,
+      "sha256": "786743839aa6d7635a17b2e32edf56f13bb4b19302c248405b6ba2cd3bc210d0"
+    },
+    {
+      "file": "ppo_ckpt_16384.pt",
+      "global_step": 16384,
+      "sha256": "4d2900a52f2fd3a18495e02726cedbbd1353fc2e365b81faf8c1eb5ed3ef5ce7"
+    },
+    {
+      "file": "ppo_ckpt_20000.pt",
+      "global_step": 20000,
+      "sha256": "b03859ca2aa5d2679313d0b2f046747b6967de0708543bc5ccc5117b89b0149c"
+    }
+  ],
+  "format_version": 1,
+  "latest": "ppo_ckpt_last.pt",
+  "updated_at": "2026-08-12T22:49:47Z"
+}

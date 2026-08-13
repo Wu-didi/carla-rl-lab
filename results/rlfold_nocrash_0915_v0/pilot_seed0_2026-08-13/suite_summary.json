@@ -1,0 +1,56 @@
+{
+  "evidence_level": "single-seed pilot",
+  "protocol": "rlfold_nocrash_0915_v0",
+  "algorithm": "demonstration-assisted pixel SAC",
+  "checkpoint": {
+    "global_step": 8000,
+    "sha256": "9ff30f291781814d33f6ee56005eb78d878de9340065c78ca41a4f3124349c2a",
+    "training_source_commit": "5ffa947808071ed87194a6480cec6c4c3dd66171"
+  },
+  "evaluation": {
+    "episodes": 150,
+    "traffic_count_note": "Counts are requested values; this evaluator version did not retain actual spawned counts.",
+    "successes": 37,
+    "success_rate": 0.24666666666666667,
+    "unweighted_density_mean": {
+      "route_completion": 0.6317629118760427,
+      "collision_rate": 0.5066666666666667,
+      "off_road_rate": 0.31333333333333335
+    },
+    "splits": {
+      "empty": {
+        "episodes": 50,
+        "requested_vehicles": 0,
+        "requested_walkers": 0,
+        "successes": 23,
+        "success_rate": 0.46,
+        "route_completion": 0.7529147863388062,
+        "collision_rate": 0.18,
+        "off_road_rate": 0.34,
+        "collisions_per_km": 0.7593073232126412
+      },
+      "regular": {
+        "episodes": 50,
+        "requested_vehicles": 15,
+        "requested_walkers": 50,
+        "successes": 12,
+        "success_rate": 0.24,
+        "route_completion": 0.6738013625144958,
+        "collision_rate": 0.52,
+        "off_road_rate": 0.36,
+        "collisions_per_km": 4.77076400967426
+      },
+      "dense": {
+        "episodes": 50,
+        "requested_vehicles": 70,
+        "requested_walkers": 150,
+        "successes": 2,
+        "success_rate": 0.04,
+        "route_completion": 0.46857258677482605,
+        "collision_rate": 0.82,
+        "off_road_rate": 0.24,
+        "collisions_per_km": 15.431807613629827
+      }
+    }
+  }
+}

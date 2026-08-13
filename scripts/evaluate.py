@@ -25,6 +25,7 @@ from carla_rl_lab.evaluation import evaluate_benchmark, summarize_suite
 from carla_rl_lab.logging import build_experiment_logger
 from carla_rl_lab.utils import apply_checkpoint_config
 from carla_rl_lab.utils import checkpoint_metadata as embedded_checkpoint_metadata
+from carla_rl_lab.utils.provenance import carla_versions
 
 
 def build_argparser() -> argparse.ArgumentParser:
@@ -201,8 +202,13 @@ def evaluate_one(args: argparse.Namespace, benchmark_name: str):
     env = None
     try:
         env = make_carla_env(cfg)
+        versions = carla_versions(env)
         logger.update_run_record(
-            {"status": "evaluating", "resumed_episodes": len(initial_results)}
+            {
+                "status": "evaluating",
+                "resumed_episodes": len(initial_results),
+                "carla_versions": versions,
+            }
         )
         agent = create_agent(cfg.algorithm, cfg)
         agent.load(args.checkpoint)
@@ -221,6 +227,18 @@ def evaluate_one(args: argparse.Namespace, benchmark_name: str):
         )
         report["algorithm"] = cfg.algorithm
         report["checkpoint"] = checkpoint
+        report["evaluation"] = {
+            key: logger.run_record[key]
+            for key in (
+                "command",
+                "config",
+                "created_at",
+                "git_commit",
+                "git_dirty",
+                "runtime",
+            )
+        }
+        report["evaluation"]["carla_versions"] = versions
         report_path = os.path.join(output_dir, "report.json")
         write_json_atomic(report_path, report)
         save_progress(report["episodes"], status="completed")

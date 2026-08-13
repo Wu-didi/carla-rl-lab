@@ -115,7 +115,13 @@ class FakeEnv:
     def step(self, action):
         self.step_count += 1
         done = self.step_count == 2
-        info = {"termination_reason": "timeout" if done else None}
+        info = {
+            "termination_reason": "timeout" if done else None,
+            "requested_vehicles": 12,
+            "requested_walkers": 34,
+            "spawned_vehicles": 11,
+            "spawned_walkers": 31,
+        }
         obs = pixel_observation()
         obs["ego_state"][0] = float(self.step_count)
         obs["ego_state"][3] = 1.0
@@ -330,6 +336,13 @@ class CoreSmokeTest(unittest.TestCase):
             batch, expert_batch=batch, bc_coef=0.25
         )
         self.assertTrue(np.isfinite(demo_update_logs["demo_bc_loss"]))
+        adaptive_logs = agent.update(
+            batch, expert_batch=batch, bc_coef=0.25, bc_mode="adaptive"
+        )
+        self.assertTrue(np.isfinite(adaptive_logs["demo_expert_advantage"]))
+        self.assertTrue(np.isfinite(adaptive_logs["demo_critic_disagreement"]))
+        self.assertGreaterEqual(adaptive_logs["demo_bc_weight_min"], 0.1)
+        self.assertLessEqual(adaptive_logs["demo_bc_weight_max"], 2.0)
         demo_logs = agent.behavior_clone(batch, coefficient=0.5)
         self.assertTrue(np.isfinite(demo_logs["bc_loss"]))
         self.assertTrue(np.isfinite(demo_logs["bc_action_mae"]))
@@ -504,6 +517,12 @@ class CoreSmokeTest(unittest.TestCase):
         self.assertEqual(report["summary"]["benchmark/distance_mean_m"], 2.0)
         self.assertAlmostEqual(
             report["summary"]["benchmark/lane_offset_mean_m"], 0.2
+        )
+        self.assertEqual(
+            report["summary"]["benchmark/requested_vehicles_mean"], 12.0
+        )
+        self.assertEqual(
+            report["summary"]["benchmark/spawned_walkers_mean"], 31.0
         )
         self.assertEqual(env.seed_calls, [0, 1])
         suite_summary = summarize_suite({"first": report, "second": report})

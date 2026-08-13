@@ -19,7 +19,7 @@ The evidence label must appear next to every result table and curve.
 | Field | Fixed value |
 | --- | --- |
 | CARLA | 0.9.15 client and server |
-| Observation | `pixel_v1`: three `84x84` RGB frames, 10 route points, speed, steer |
+| Observation | `pixel_v1`: two `84x84` RGB frames, 10 route points, speed, steer |
 | Action | `target_speed_2d` |
 | Reward | `nocrash_v0` |
 | Train map | Town01 |
@@ -45,11 +45,36 @@ For every training seed retain:
 
 For every evaluation episode retain route, weather, traffic density, success,
 route completion, distance, speed, collision category, red-light event,
-blockage, termination reason, and checkpoint SHA-256. Publish per-seed values,
-then mean and standard deviation. Checkpoint selection must not use the final
-test suite unless that selection procedure is disclosed.
+blockage, requested and actually spawned actor counts, termination reason, and
+checkpoint SHA-256. Publish per-seed values, then mean and standard deviation.
+Checkpoint selection must not use the final test suite unless that selection
+procedure is disclosed.
 
-## Current Verified Smoke
+## Current Seed-0 Pilot
+
+On 2026-08-13, five pixel-native methods were trained with seed 0 on
+`nocrash_train_regular_v0` (fixed Town01 20/50 traffic). Checkpoints were
+selected on the same limited 10-episode Town02 Empty grid.
+
+| Method | Budget | Selected checkpoint | Selection success |
+| --- | ---: | ---: | ---: |
+| SAC | 20k environment steps | 8k | 0% |
+| TD3 | 20k environment steps | 8k | 40% |
+| BC | 10k updates / 10k demonstrations | 10k | 20% |
+| PPO | 20k environment steps | 20k | 0% |
+| SAC + demonstrations | 5k BC pretrain + 20k environment steps | 8k | 60% |
+
+The frozen SAC + demonstrations checkpoint achieved 46% success on all 50
+Empty episodes, 24% on all 50 Regular episodes, and 4% on all 50 Dense
+episodes. See the
+[tracked evidence bundle](../results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/)
+for curves, raw scalar exports, per-episode reports, commands, and hashes.
+
+This remains a **pilot** because it has one seed, a 20k budget, and a fixed
+20/50 curriculum rather than the primary sampled 0-150/0-300 training
+distribution. Test-suite scores must not be used for further checkpoint tuning.
+
+## Verified Smoke
 
 On 2026-08-12, the current `pixel_v1` SAC path was executed against a real
 CARLA 0.9.15 server:
@@ -61,9 +86,8 @@ CARLA 0.9.15 server:
 | Artifacts | TensorBoard events plus checkpoints at 32 and 64 steps |
 | Limited evaluation | One Town02 route and one weather; failed after collision |
 
-The poor limited evaluation is expected for a 64-step policy and is recorded
-as a negative smoke, not a baseline. Longer pilots and full multi-seed results
-must replace this section before a release claims learned driving performance.
+The poor limited evaluation is expected for a 64-step policy and remains a
+negative integration record, not a performance result.
 
 ## Integration Matrix
 
@@ -75,8 +99,9 @@ CARLA_PORT=2000 scripts/run_research_smoke.sh
 
 Defaults are 64 expert transitions, 64 online environment steps, and 8 offline
 updates. This checks collection, SAC, PPO, BC, TD3+BC, TensorBoard, and
-checkpoint wiring on the named Town01 curriculum. Only SAC currently uses the
-pixel-native encoder; the other tracks are interface smoke tests.
+checkpoint wiring on the named Town01 curriculum. SAC, TD3, PPO, and BC have
+pixel-native policies; offline and adversarial-imitation tracks remain MLP
+interface tests.
 
 ## Publishing
 

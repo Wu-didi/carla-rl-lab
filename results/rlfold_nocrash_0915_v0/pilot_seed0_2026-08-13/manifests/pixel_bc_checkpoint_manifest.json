@@ -1,0 +1,38 @@
+{
+  "algorithm": "bc",
+  "selected": {
+    "file": "bc_ckpt_10000.pt",
+    "global_step": 10000,
+    "sha256": "da56f7f50629596734506f7503ee4397174157993c83be97bbfde4e33472bf98"
+  },
+  "checkpoints": [
+    {
+      "file": "bc_ckpt_2000.pt",
+      "global_step": 2000,
+      "sha256": "35b836c78e1e4be4da5f55d37b89edb042a0d875610a227cd334be8819c74a7a"
+    },
+    {
+      "file": "bc_ckpt_4000.pt",
+      "global_step": 4000,
+      "sha256": "46daf16b0d2ba2f281ecfed8207501b3da8816879becde56ec4af9e3da608dc8"
+    },
+    {
+      "file": "bc_ckpt_6000.pt",
+      "global_step": 6000,
+      "sha256": "9cd31036c1f3f56a0ce801ed4da2dbeef8e3ec62128a6f1fcd100a2490eee9c5"
+    },
+    {
+      "file": "bc_ckpt_8000.pt",
+      "global_step": 8000,
+      "sha256": "202650cb7e5859ad249c0125a2c88b3bce0b379918f9f3de74ac1022ba8c7e4a"
+    },
+    {
+      "file": "bc_ckpt_10000.pt",
+      "global_step": 10000,
+      "sha256": "da56f7f50629596734506f7503ee4397174157993c83be97bbfde4e33472bf98"
+    }
+  ],
+  "format_version": 1,
+  "latest": "bc_ckpt_last.pt",
+  "updated_at": "2026-08-12T20:38:12Z"
+}

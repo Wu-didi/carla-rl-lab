@@ -43,6 +43,11 @@ python scripts/evaluate.py \
 Use `--routes 1 --weathers 1` only for a quick integration check. Results from
 a limited grid must be labeled as smoke or pilot results.
 
+Long evaluations atomically write `progress.json` after every episode. If the
+evaluator is interrupted, repeat the identical command with `--resume`.
+Checkpoint SHA-256, algorithm, benchmark, and evaluation scope must all match
+before completed episodes are reused.
+
 ### Success And Metrics
 
 An episode succeeds only when its destination is reached with zero collisions.
@@ -53,14 +58,20 @@ completion, distance, speed, lane offset, collision category, termination
 reason, and success.
 
 Aggregate outputs include mean/std return and distance, success rate, route
-completion, stationary rate, and pedestrian/vehicle/layout collision,
-red-light, blockage, and off-road events per km.
+completion, stationary rate, requested and actually spawned traffic counts,
+and pedestrian/vehicle/layout collision, red-light, blockage, and off-road
+events per km.
 
 CARLA 0.9.15 does not expose the old NoCrash evaluator unchanged. Route
 execution, traffic spawning, and red-light detection are local adaptations.
 The exact CARLA build, source commit, checkpoint hash, route assets, and config
 must accompany a reported result. These numbers are not directly comparable to
 the original CARLA 0.8 NoCrash table or to RLAD's CARLA 0.9.10.1 table.
+
+The current seed-0 pilot and complete per-episode reports are published in the
+[results directory](../results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/).
+Its fixed Town01 20/50 curriculum is labeled separately from the primary
+RLfOLD-style sampled training distribution.
 
 ## Lightweight Compatibility Suite
 

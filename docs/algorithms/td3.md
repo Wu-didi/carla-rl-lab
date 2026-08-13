@@ -22,10 +22,13 @@ deterministic action.
 
 ```bash
 python scripts/train.py \
-  --benchmark nocrash_train_empty_v0 \
-  --algo td3 --total-timesteps 100000 --checkpoint-interval 10000 \
-  --seed 0 --logger tensorboard \
-  --checkpoint-replay-buffer --run-name nocrash/td3_mlp_smoke_seed0
+  --algo td3 --network Pixel_SAC \
+  --benchmark nocrash_train_regular_v0 \
+  --total-timesteps 20000 --checkpoint-interval 2000 \
+  --minimal-size 1500 --batch-size 64 --buffer-size 15000 \
+  --hidden-dim 128 --view-mode none --logger tensorboard \
+  --run-name pilots/rlfold_town01_regular_pixel_td3_seed0_20k \
+  --seed 0 --port 2000 --require-clean-git
 ```
 
 Resume by adding `--checkpoint /path/to/td3_ckpt_last.pt` and setting the new
@@ -34,8 +37,13 @@ absolute `--total-timesteps` target.
 ## Metrics And Results
 
 Plot both critic losses, delayed `actor_loss`, `avg_q`, episode return/cost,
-action distributions, termination reasons, and reward terms. CPU update and
-checkpoint round-trip tests pass. A formal CARLA training run and performance
-curve have not been completed; status is **Pending**, not zero performance.
-The command currently uses the MLP on packed input and is an interface run, not
-a pixel-native baseline.
+action distributions, termination reasons, and reward terms.
+
+The 2026-08-13 seed-0 pilot completed 20k real CARLA 0.9.15 steps with the
+pixel encoder. Step 8k was best on the fixed 10-episode selector: **40%
+success**, 0.999 mean route completion, 40% collision rate, and 20% off-road
+rate. Later checkpoints regressed, which is why checkpoint selection is kept
+separate from the full test suite. Curves, scalar CSV files, run metadata, and
+the checkpoint manifest are in the [evidence bundle](../../results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/README.md).
+This is a small single-seed pilot; TD3 has not yet received a 150-episode full
+suite evaluation.

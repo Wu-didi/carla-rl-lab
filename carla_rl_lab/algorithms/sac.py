@@ -252,6 +252,7 @@ class SacAgent(BaseAgent):
         batch: Dict[str, Any],
         expert_batch: Optional[Dict[str, Any]] = None,
         bc_coef: float = 0.0,
+        bc_mode: str = "fixed",
     ) -> Dict[str, Any]:
         states = torch.as_tensor(batch["states"], dtype=torch.float32, device=self.device)
         actions = torch.as_tensor(batch["actions"], dtype=torch.float32, device=self.device)
@@ -281,19 +282,21 @@ class SacAgent(BaseAgent):
         self.critic_2_optimizer.step()
 
         new_actions, log_prob, attention = self.actor(states)
-        q_value = torch.min(
-            self.critic_1(states, new_actions),
-            self.critic_2(states, new_actions),
-        )
+        policy_q_1 = self.critic_1(states, new_actions)
+        policy_q_2 = self.critic_2(states, new_actions)
+        q_value = torch.min(policy_q_1, policy_q_2)
         actor_rl_loss = (
             self.log_alpha.exp().detach() * log_prob - q_value
         ).mean()
         actor_loss = actor_rl_loss
         demo_bc_loss = None
         demo_action_mae = None
+        demo_logs = {}
         if expert_batch is not None:
             if bc_coef <= 0.0:
                 raise ValueError("bc_coef must be positive with an expert batch")
+            if bc_mode not in ("fixed", "adaptive"):
+                raise ValueError("bc_mode must be 'fixed' or 'adaptive'")
             expert_states = torch.as_tensor(
                 expert_batch["states"], dtype=torch.float32, device=self.device
             )
@@ -301,9 +304,77 @@ class SacAgent(BaseAgent):
                 expert_batch["actions"], dtype=torch.float32, device=self.device
             )
             predicted_expert_actions = self.actor.deterministic(expert_states)
-            demo_bc_loss = F.mse_loss(
-                predicted_expert_actions, expert_actions
-            )
+            per_sample_bc = F.mse_loss(
+                predicted_expert_actions, expert_actions, reduction="none"
+            ).mean(dim=1, keepdim=True)
+            bc_weights = torch.ones_like(per_sample_bc)
+            if bc_mode == "adaptive":
+                critic_training = (self.critic_1.training, self.critic_2.training)
+                self.critic_1.eval()
+                self.critic_2.eval()
+                with torch.no_grad():
+                    expert_q_1 = self.critic_1(expert_states, expert_actions)
+                    expert_q_2 = self.critic_2(expert_states, expert_actions)
+                    policy_expert_q_1 = self.critic_1(
+                        expert_states, predicted_expert_actions.detach()
+                    )
+                    policy_expert_q_2 = self.critic_2(
+                        expert_states, predicted_expert_actions.detach()
+                    )
+                    expert_q = torch.min(expert_q_1, expert_q_2)
+                    policy_expert_q = torch.min(
+                        policy_expert_q_1, policy_expert_q_2
+                    )
+                    q_scale = 1.0 + 0.25 * (
+                        expert_q_1.abs()
+                        + expert_q_2.abs()
+                        + policy_expert_q_1.abs()
+                        + policy_expert_q_2.abs()
+                    )
+                    normalized_advantage = (
+                        expert_q - policy_expert_q
+                    ) / q_scale
+                    normalized_disagreement = torch.maximum(
+                        (expert_q_1 - expert_q_2).abs(),
+                        (policy_expert_q_1 - policy_expert_q_2).abs(),
+                    ) / q_scale
+                    temperature = max(
+                        float(getattr(self.cfg, "demo_q_temperature", 0.1)),
+                        1e-6,
+                    )
+                    advantage_gate = torch.sigmoid(
+                        normalized_advantage / temperature
+                    )
+                    uncertainty_gate = 1.0 - torch.exp(
+                        -normalized_disagreement
+                    )
+                    bc_weights = float(
+                        getattr(self.cfg, "demo_advantage_beta", 1.0)
+                    ) * advantage_gate + float(
+                        getattr(self.cfg, "demo_uncertainty_beta", 1.0)
+                    ) * uncertainty_gate
+                    bc_weights = bc_weights.clamp(
+                        min=float(
+                            getattr(self.cfg, "demo_bc_weight_min", 0.1)
+                        ),
+                        max=float(
+                            getattr(self.cfg, "demo_bc_weight_max", 2.0)
+                        ),
+                    )
+                self.critic_1.train(critic_training[0])
+                self.critic_2.train(critic_training[1])
+                demo_logs = {
+                    "demo_expert_advantage": normalized_advantage.mean().item(),
+                    "demo_critic_disagreement": normalized_disagreement.mean().item(),
+                    "demo_bc_weight_mean": bc_weights.mean().item(),
+                    "demo_bc_weight_min": bc_weights.min().item(),
+                    "demo_bc_weight_max": bc_weights.max().item(),
+                    "demo_expert_preferred_rate": (
+                        normalized_advantage > 0.0
+                    ).float().mean().item(),
+                }
+            demo_bc_loss = (bc_weights * per_sample_bc).mean()
+            demo_unweighted_bc_loss = per_sample_bc.mean()
             demo_action_mae = F.l1_loss(
                 predicted_expert_actions, expert_actions
             )
@@ -329,11 +400,16 @@ class SacAgent(BaseAgent):
             "alpha_loss": alpha_loss.item(),
             "alpha": self.log_alpha.exp().item(),
             "avg_q": q_value.mean().item(),
+            "critic_disagreement": (
+                policy_q_1.detach() - policy_q_2.detach()
+            ).abs().mean().item(),
             "entropy": -log_prob.mean().item(),
         }
         if demo_bc_loss is not None and demo_action_mae is not None:
             logs["demo_bc_loss"] = demo_bc_loss.item()
+            logs["demo_unweighted_bc_loss"] = demo_unweighted_bc_loss.item()
             logs["demo_bc_action_mae"] = demo_action_mae.item()
+            logs.update(demo_logs)
         if attention is not None:
             mean_attention = attention.detach().mean(dim=0)
             logs["attention_img"] = mean_attention[None, None, :].cpu()

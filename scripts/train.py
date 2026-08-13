@@ -162,6 +162,16 @@ def train(cfg: Config) -> None:
         raise ValueError("demo_pretrain_updates cannot be negative")
     if cfg.demo_bc_coef < 0.0:
         raise ValueError("demo_bc_coef cannot be negative")
+    if cfg.demo_bc_mode not in ("fixed", "adaptive"):
+        raise ValueError("demo_bc_mode must be 'fixed' or 'adaptive'")
+    if cfg.demo_q_temperature <= 0.0:
+        raise ValueError("demo_q_temperature must be positive")
+    if cfg.demo_advantage_beta < 0.0:
+        raise ValueError("demo_advantage_beta cannot be negative")
+    if cfg.demo_uncertainty_beta < 0.0:
+        raise ValueError("demo_uncertainty_beta cannot be negative")
+    if not 0.0 <= cfg.demo_bc_weight_min <= cfg.demo_bc_weight_max:
+        raise ValueError("invalid adaptive demonstration weight bounds")
     if cfg.require_clean_git and git_is_dirty(project_root()):
         raise RuntimeError(
             "Public runs require a clean git worktree; commit or stash changes first"
@@ -299,6 +309,7 @@ def train(cfg: Config) -> None:
                                 cfg.batch_size, fields=("states", "actions")
                             ),
                             bc_coef=cfg.demo_bc_coef,
+                            bc_mode=cfg.demo_bc_mode,
                         )
                     else:
                         losses = agent.update(
@@ -422,6 +433,14 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--demo-pretrain-updates", type=int, default=None)
     parser.add_argument("--demo-bc-coef", type=float, default=None)
     parser.add_argument(
+        "--demo-bc-mode", choices=["fixed", "adaptive"], default=None
+    )
+    parser.add_argument("--demo-q-temperature", type=float, default=None)
+    parser.add_argument("--demo-advantage-beta", type=float, default=None)
+    parser.add_argument("--demo-uncertainty-beta", type=float, default=None)
+    parser.add_argument("--demo-bc-weight-min", type=float, default=None)
+    parser.add_argument("--demo-bc-weight-max", type=float, default=None)
+    parser.add_argument(
         "--vehicles", dest="number_of_vehicles", type=int, default=None
     )
     parser.add_argument(
@@ -506,6 +525,12 @@ def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
         "expert_dataset_path",
         "demo_pretrain_updates",
         "demo_bc_coef",
+        "demo_bc_mode",
+        "demo_q_temperature",
+        "demo_advantage_beta",
+        "demo_uncertainty_beta",
+        "demo_bc_weight_min",
+        "demo_bc_weight_max",
         "number_of_vehicles",
         "number_of_walkers",
         "view_mode",

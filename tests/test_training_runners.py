@@ -142,12 +142,24 @@ class TrainingRunnerTest(unittest.TestCase):
                 "200",
                 "--demo-bc-coef",
                 "0.25",
+                "--demo-bc-mode",
+                "adaptive",
+                "--demo-q-temperature",
+                "0.2",
+                "--demo-advantage-beta",
+                "0.5",
+                "--demo-uncertainty-beta",
+                "0.75",
             ]
         )
         cfg = off_policy_runner.apply_overrides(Config(), args)
         self.assertEqual(cfg.expert_dataset_path, "expert.npz")
         self.assertEqual(cfg.demo_pretrain_updates, 200)
         self.assertEqual(cfg.demo_bc_coef, 0.25)
+        self.assertEqual(cfg.demo_bc_mode, "adaptive")
+        self.assertEqual(cfg.demo_q_temperature, 0.2)
+        self.assertEqual(cfg.demo_advantage_beta, 0.5)
+        self.assertEqual(cfg.demo_uncertainty_beta, 0.75)
 
     def test_on_policy_cli_overrides_same_config_instance(self):
         args = on_policy_runner.build_argparser().parse_args(

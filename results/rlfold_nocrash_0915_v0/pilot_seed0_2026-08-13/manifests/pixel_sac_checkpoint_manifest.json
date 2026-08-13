@@ -1,0 +1,38 @@
+{
+  "algorithm": "sac",
+  "selected": {
+    "file": "candidates/sac_ckpt_8000.pt",
+    "global_step": 8000,
+    "sha256": "1cc6bae49588d1647063b7ec7586b6a9679e4c832c73ff205a380d0b5e4887fb"
+  },
+  "checkpoints": [
+    {
+      "file": "sac_ckpt_12000.pt",
+      "global_step": 12000,
+      "sha256": "49fb158b1eafb6d2b082739968e79677ab05f0977696f96f7107ee29a42626de"
+    },
+    {
+      "file": "sac_ckpt_14000.pt",
+      "global_step": 14000,
+      "sha256": "3f510efa5ec8065b2d793257af8fa9e20ffbe28a527c8eabbc091b6127394ff2"
+    },
+    {
+      "file": "sac_ckpt_16000.pt",
+      "global_step": 16000,
+      "sha256": "6ce750f8d5b93c15ed4c9e237bd2a4bd8ff04923a6bfc30bef0635f755347bf0"
+    },
+    {
+      "file": "sac_ckpt_18000.pt",
+      "global_step": 18000,
+      "sha256": "241e18621f7ce5b7fba4b7087267b44b1d971020333833456c08a49552a5a664"
+    },
+    {
+      "file": "sac_ckpt_20000.pt",
+      "global_step": 20000,
+      "sha256": "dacde37830a1e54c114889f2df99598a936a09df12a2aae3bc5c5c4f7abe074b"
+    }
+  ],
+  "format_version": 1,
+  "latest": "sac_ckpt_last.pt",
+  "updated_at": "2026-08-12T18:42:15Z"
+}

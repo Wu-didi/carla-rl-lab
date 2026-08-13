@@ -30,6 +30,12 @@ recordings/
 *.npy
 *.npz
 
+# The first public pilot keeps exactly one selected, hash-verified checkpoint.
+!results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/checkpoints/
+!results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/checkpoints/sac_demo_seed0_step8000.pt
+!results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/runs/
+!results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/runs/*.json
+
 # Build outputs
 build/
 dist/

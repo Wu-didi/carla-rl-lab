@@ -95,6 +95,12 @@ class Config:
     expert_dataset_path: str = ''
     demo_pretrain_updates: int = 0
     demo_bc_coef: float = 0.0
+    demo_bc_mode: str = 'fixed'
+    demo_q_temperature: float = 0.1
+    demo_advantage_beta: float = 1.0
+    demo_uncertainty_beta: float = 1.0
+    demo_bc_weight_min: float = 0.1
+    demo_bc_weight_max: float = 2.0
     discriminator_lr: float = 3e-4
     discriminator_updates: int = 1
     imitation_updates: int = 100_000

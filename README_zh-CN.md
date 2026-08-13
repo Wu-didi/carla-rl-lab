@@ -17,9 +17,10 @@ CarlaRLLab 服务于需要频繁修改策略网络、观测、奖励函数和训
 避免把关键逻辑藏在复杂 RL 框架与多层 wrapper 中。第一版有意控制范围：先做好一个
 Pixel SAC 主基线、一个有版本的 NoCrash 适配、透明的 PyTorch 实现和可复现实验产物。
 
-> **当前研究状态：**CARLA 0.9.15 连接、像素观测、固定路线、replay 更新、
-> checkpoint、TensorBoard 和真实端到端训练 smoke 均已验证。Smoke 只能证明链路
-> 可运行，不代表算法已经收敛；多随机种子正式结果仍在进行中。
+> **当前研究状态：**已经在 CARLA 0.9.15 中真实完成 20k step 的 Pixel SAC、
+> TD3、PPO、BC 与示范辅助 SAC pilot。选中的 seed-0 checkpoint 在 Town02 完整
+> 50 回合 Empty 测试中成功率为 46%，Regular 为 24%，Dense 为 4%。这是公开
+> 透明的小预算 pilot，不是三随机种子论文级 baseline。
 
 ## 为什么做 CarlaRLLab
 
@@ -36,10 +37,10 @@ Pixel SAC 主基线、一个有版本的 NoCrash 适配、透明的 PyTorch 实�
 
 | 分类 | 算法 | 实现状态 |
 | --- | --- | --- |
-| 在线、off-policy | SAC、TD3、DDPG | SAC 已有主要像素编码器；三个算法的 MLP 核心均有测试 |
-| 在线、on-policy | PPO、A2C | 更新公式和 runner 已实现；像素编码器待接入 |
+| 在线、off-policy | SAC、TD3、DDPG | Pixel SAC、TD3 已实车训练；DDPG MLP 核心已测试 |
+| 在线、on-policy | PPO、A2C | Pixel PPO 已实车训练；A2C 核心已测试 |
 | 离线 RL | TD3+BC、CQL(H)、IQL | Dataset runner 与 MLP 核心已实现；像素基线待完成 |
-| 模仿学习 | BC、GAIL、AIRL | Runner 已实现；像素基线待完成 |
+| 模仿学习 | BC、GAIL、AIRL | Pixel BC 已实车训练；对抗模仿核心已测试 |
 
 算法 registry 会阻止用错误 runner 启动算法。这里的“已实现”不等于已经有论文级
 CARLA checkpoint；只有在下面固定协议中完成训练与验证后，才会发布正式 baseline。
@@ -83,6 +84,30 @@ baseline 前缩放到 `84x84`。RLAD 使用
 堵塞和每公里违规数。红灯检测是明确记录
 的 CARLA 0.9.15 近似实现，因此该 suite 称为 0.9.15 adaptation，而不是旧版
 CARLA 0.8 NoCrash 原生 runner。
+
+## 可复现 Pilot 结果
+
+第一批受 Git 跟踪的证据位于
+[`results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/`](results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/)。
+所有算法使用相同的前视 RGB 输入、Town01 固定 20 车/50 行人训练课程、seed 0，
+并在 Town02 Empty 的同一 10 回合网格上选择 checkpoint。
+
+| 方法 | 预算 | 选择 step | 选模成功率 |
+| --- | ---: | ---: | ---: |
+| Pixel SAC | 20k 环境 step | 8k | 0% |
+| Pixel TD3 | 20k 环境 step | 8k | 40% |
+| Pixel BC | 10k update / 10k 示范 | 10k | 20% |
+| Pixel PPO | 20k 环境 step | 20k | 0% |
+| Pixel SAC + 示范 | 5k BC 预训练 + 20k 环境 step | **8k** | **60%** |
+
+冻结后的示范辅助 SAC checkpoint 在完整 50 回合条件下取得 **46% Empty**、
+**24% Regular** 与 **4% Dense** 成功率。Dense 使用未修改的请求交通流 70 车/
+150 行人。证据目录包含逐回合 JSON、scalar CSV、曲线、命令、哈希与局限说明。
+选中的
+[`sac_demo_seed0_step8000.pt`](results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/checkpoints/sac_demo_seed0_step8000.pt)
+检查点直接纳入仓库，并使用 SHA-256 校验。
+
+![示范辅助 SAC episode return](results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/curves/pixel_sac_demo_episode_reward.png)
 
 ## 目录结构
 
@@ -249,6 +274,30 @@ python scripts/train.py \
 每条 transition 包含两个 `42,358` 字节的观测；30,000 条 replay 的观测约占
 2.5 GB。应根据机器内存设置 buffer。
 
+### 使用在线示范训练
+
+先在同一课程采集 BehaviorAgent 示范，再把 actor 预训练和显式 BC 项加入 SAC：
+
+```bash
+python scripts/collect_dataset.py \
+  --benchmark nocrash_train_regular_v0 --policy autopilot \
+  --transitions 10000 \
+  --output artifacts/datasets/nocrash_regular_demo_seed0_10k.npz \
+  --view-mode none --seed 0
+
+python scripts/train.py \
+  --benchmark nocrash_train_regular_v0 --algo sac \
+  --expert-dataset artifacts/datasets/nocrash_regular_demo_seed0_10k.npz \
+  --demo-pretrain-updates 5000 --demo-bc-coef 0.5 \
+  --total-timesteps 20000 --minimal-size 1500 \
+  --batch-size 64 --buffer-size 15000 --hidden-dim 128 \
+  --checkpoint-interval 2000 --logger tensorboard \
+  --run-name nocrash/pixel_sac_demo_seed0 --seed 0
+```
+
+这是受在线示范研究启发、保持代码透明的本地适配，不会宣称为 RLfOLD 完整方法的
+精确复现。
+
 ## 在相同协议验证
 
 先跑一条路线、一个天气：
@@ -266,8 +315,11 @@ python scripts/evaluate.py \
 python scripts/evaluate.py \
   --checkpoint /path/to/sac_ckpt_last.pt \
   --suite rlfold_nocrash_0915_v0 \
-  --logger tensorboard
+  --output-tag release --logger tensorboard
 ```
+
+评估每完成一个 episode 都会写入 `progress.json`。中断后用相同命令加
+`--resume`；程序会先校验 benchmark、scope 和 checkpoint 哈希。
 
 所有算法必须使用同一 checkpoint 选择规则、路线、天气、交通量、图像协议和随机
 种子。报告保存在 `artifacts/evaluations/`，并带 checkpoint SHA-256 与完整元数据。
@@ -309,6 +361,11 @@ python scripts/export_curves.py \
 | Benchmark 交通、路线、天气 | [`carla_rl_lab/benchmarks/specs.py`](carla_rl_lab/benchmarks/specs.py) |
 | 指标和成功规则 | [`carla_rl_lab/evaluation/evaluator.py`](carla_rl_lab/evaluation/evaluator.py) |
 
+第一批 pilot 暴露出一个具体科研问题：SAC 和 TD3 都在早期达到峰值后退化，但训练
+return 仍为正。可选的 [CADR 研究原型](docs/research/cadr.md) 用保守专家优势和
+twin-critic 分歧自适应调整示范约束，研究其能否改善跨交通密度泛化。方法声明、指标、
+相关工作边界与预注册消融都在实验启动前写入文档。
+
 新增 reward 应同时返回标量与命名分项。新增观测应建立新的协议名和 shape，不能悄悄
 改变 `pixel_v1` 的含义。
 
@@ -320,8 +377,10 @@ python scripts/collect_dataset.py \
   --benchmark nocrash_train_empty_v0 --policy autopilot \
   --transitions 100000 --output artifacts/datasets/nocrash_expert.npz
 
-# 离线/模仿 runner（当前为 MLP baseline，像素 adapter 待完成）
+# 离线 runner（像素 baseline 仍待完成）
 python scripts/train_offline.py --algo td3_bc --dataset artifacts/datasets/nocrash_expert.npz
+
+# Pixel 行为克隆
 python scripts/train_imitation.py --algo bc --expert-dataset artifacts/datasets/nocrash_expert.npz
 
 # 64 step 端到端集成矩阵，不是性能 benchmark
@@ -336,8 +395,9 @@ benchmark 定义见 [docs/benchmarks.md](docs/benchmarks.md)，结果报告约�
 
 - [ ] 使用三个完整训练随机种子验证 CARLA 0.9.15，并发布 checkpoint 与原始
   TensorBoard/W&B 导出。
-- [ ] 为 TD3、DDPG、PPO、A2C、离线 RL 和模仿学习补齐像素编码器，在同一
-  NoCrash suite 上实际训练每个算法。
+- [x] 在同一 NoCrash 适配上训练 seed-0 Pixel SAC、TD3、PPO、BC 与示范辅助
+  SAC pilot，并发布曲线。
+- [ ] 补齐 Pixel DDPG、A2C、离线 RL、GAIL 与 AIRL baseline。
 - [ ] 每个 checkpoint 报告 loss、return、路线完成度、成功率、分类碰撞、红灯与
   堵塞指标。
 - [ ] 对相机历史、路线表示、速度、转角及未来传感器融合观测做有版本的消融，不把

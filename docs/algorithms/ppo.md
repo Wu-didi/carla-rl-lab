@@ -23,17 +23,26 @@ timeout-aware GAE, normalized advantages, and gradient clipping.
 
 ```bash
 python scripts/train_on_policy.py \
-  --benchmark nocrash_train_empty_v0 \
-  --algo ppo --total-timesteps 100000 --rollout-steps 2048 \
-  --checkpoint-interval 10000 --ppo-epochs 10 --ppo-minibatch-size 64 \
-  --seed 0 --logger tensorboard --run-name nocrash/ppo_mlp_smoke_seed0
+  --algo ppo --network Pixel_SAC \
+  --benchmark nocrash_train_regular_v0 \
+  --total-timesteps 20000 --rollout-steps 1024 \
+  --checkpoint-interval 4000 --hidden-dim 128 \
+  --ppo-epochs 5 --ppo-minibatch-size 64 \
+  --view-mode none --logger tensorboard \
+  --run-name pilots/rlfold_town01_regular_pixel_ppo_seed0_20k \
+  --seed 0 --port 2000 --require-clean-git
 ```
 
 ## Metrics And Results
 
 Inspect `actor_loss`, `value_loss`, `entropy`, `approx_kl`, `clip_fraction`,
 return/cost, and action statistics. `approx_kl` and `clip_fraction` diagnose
-updates that are too large even when return is noisy. A 32-step CARLA 0.9.15
-integration smoke completed with one rollout/update and valid checkpoint. That
-is runner evidence only; a formal result and curves are **Pending**.
-The current runner uses an MLP; pixel-native PPO remains pending.
+updates that are too large even when return is noisy.
+
+The 2026-08-13 pixel-native PPO seed-0 pilot completed 20k CARLA 0.9.15 steps
+and 20 rollout updates. Its selected 20k checkpoint scored **0% success**,
+0.482 mean route completion, 60% collision rate, and 80% off-road rate on the
+fixed 10-episode selector. This is a useful negative pilot rather than a
+competitive baseline: it verifies the full image runner and shows that this
+budget/configuration is insufficient. Curves and exact metadata are in the
+[evidence bundle](../../results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/README.md).

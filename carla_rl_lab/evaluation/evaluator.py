@@ -64,7 +64,7 @@ def summarize_results(results: List[Dict[str, Any]]) -> Dict[str, float]:
         for item in results
     )
     total_distance_km = max(float(distances.sum()) / 1000.0, 1e-3)
-    return {
+    summary = {
         "benchmark/return_mean": float(returns.mean()),
         "benchmark/return_std": float(returns.std()),
         "benchmark/cost_mean": float(costs.mean()),
@@ -99,6 +99,18 @@ def summarize_results(results: List[Dict[str, Any]]) -> Dict[str, float]:
         )
         / count,
     }
+    traffic_fields = (
+        "requested_vehicles",
+        "requested_walkers",
+        "spawned_vehicles",
+        "spawned_walkers",
+    )
+    for field in traffic_fields:
+        if all(field in item for item in results):
+            summary["benchmark/{}_mean".format(field)] = float(
+                np.mean([float(item[field]) for item in results])
+            )
+    return summary
 
 
 def summarize_suite(reports: Mapping[str, Dict[str, Any]]) -> Dict[str, float]:
@@ -245,6 +257,8 @@ def evaluate_benchmark(
             "blocked_count": int(info.get("blocked_count", 0)),
             "requested_vehicles": int(info.get("requested_vehicles", 0)),
             "requested_walkers": int(info.get("requested_walkers", 0)),
+            "spawned_vehicles": int(info.get("spawned_vehicles", 0)),
+            "spawned_walkers": int(info.get("spawned_walkers", 0)),
             "termination_reason": termination_reason,
             "success": success,
         }
@@ -279,6 +293,18 @@ def evaluate_benchmark(
                     "benchmark/stationary_rate": result["stationary_rate"],
                     "benchmark/route_completion": result["route_completion"],
                     "benchmark/success": float(result["success"]),
+                    "benchmark/requested_vehicles": float(
+                        result["requested_vehicles"]
+                    ),
+                    "benchmark/requested_walkers": float(
+                        result["requested_walkers"]
+                    ),
+                    "benchmark/spawned_vehicles": float(
+                        result["spawned_vehicles"]
+                    ),
+                    "benchmark/spawned_walkers": float(
+                        result["spawned_walkers"]
+                    ),
                 },
                 episode_index,
             )

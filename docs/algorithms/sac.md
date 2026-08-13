@@ -27,20 +27,43 @@ critics instead of hiding them in a framework policy class.
 
 ## Start
 
+Plain pixel SAC:
+
 ```bash
 python scripts/train.py \
-  --benchmark nocrash_train_empty_v0 \
   --algo sac --network Pixel_SAC \
-  --total-timesteps 100000 \
-  --minimal-size 1500 --batch-size 128 --buffer-size 30000 \
-  --hidden-dim 256 --checkpoint-interval 10000 \
-  --logger tensorboard \
-  --run-name nocrash/pixel_sac_empty_seed0 --seed 0
+  --benchmark nocrash_train_regular_v0 \
+  --total-timesteps 20000 --checkpoint-interval 2000 \
+  --minimal-size 1500 --batch-size 64 --buffer-size 15000 \
+  --hidden-dim 128 --view-mode none --logger tensorboard \
+  --run-name pilots/rlfold_town01_regular_pixel_sac_seed0_20k \
+  --seed 0 --port 2000 --require-clean-git
 ```
 
-After the curriculum, train the primary regular-traffic configuration by using
-`--benchmark nocrash_train_v0`. Resume with `--checkpoint` and a larger absolute
-`--total-timesteps`.
+The runner can also initialize the actor from demonstrations and retain an
+editable BC term during online SAC updates:
+
+```bash
+python scripts/train.py \
+  --algo sac --network Pixel_SAC \
+  --benchmark nocrash_train_regular_v0 \
+  --total-timesteps 20000 --checkpoint-interval 2000 \
+  --minimal-size 1500 --batch-size 64 --buffer-size 15000 \
+  --hidden-dim 128 \
+  --expert-dataset artifacts/datasets/rlfold_town01_regular_behavior_agent_seed0_10k.npz \
+  --demo-pretrain-updates 5000 --demo-bc-coef 0.5 \
+  --view-mode none --logger tensorboard \
+  --run-name pilots/rlfold_town01_regular_pixel_sac_demo_seed0_20k \
+  --seed 0 --port 2000 --require-clean-git
+```
+
+This uses `L_actor = L_SAC + 0.5 * L_BC`; it is demonstration-assisted SAC,
+not plain SAC and not a new algorithm name. Resume with `--checkpoint` and a
+larger absolute `--total-timesteps`.
+
+An optional [CADR research prototype](../research/cadr.md) replaces the fixed
+per-sample BC weight with a conservative expert-advantage and twin-critic
+disagreement gate. It is an ablation target, not a validated improvement.
 
 ## Inspect
 
@@ -59,18 +82,20 @@ python scripts/evaluate.py \
 ```
 
 Formal evaluation replaces the limited target with `--suite
-nocrash_0915_v0`.
+rlfold_nocrash_0915_v0 --output-tag selected`. Add `--resume` after an
+interrupted evaluation; completed episodes are validated and reused.
 
 ## Current Result
 
-**Evidence: CARLA integration smoke, not a baseline.** On 2026-08-12 the pixel
-path completed 64 real CARLA 0.9.15 steps and 57 gradient updates, writing
-TensorBoard scalars and checkpoints at steps 32 and 64. A one-route,
-one-weather Town02 evaluation terminated in a layout collision after 70 steps,
-with about 9.1% route completion. This negative result is expected at 64 steps
-and establishes only that training and evaluation use the same sensor/action
-contract.
+The 2026-08-13 CARLA 0.9.15 seed-0 pilot trained both variants for 20k online
+steps in Town01 Regular traffic. On the common 10-episode Town02 Empty selector,
+plain SAC selected step 8k with 0% success and 0.360 mean route completion.
+Demonstration-assisted SAC selected step 8k with **60% success**, 0.786 mean
+completion, 20% collision rate, and 20% off-road rate.
 
-The earlier 10k Town05 vector/risk-field pilot is not a current input baseline
-and must not be compared with `pixel_v1`. A publishable SAC row still requires
-three converged seeds and the complete 150-episode suite.
+The frozen assisted checkpoint then scored **46% (23/50)** on the full Empty
+split, **24% (12/50)** on Regular, and **4% (2/50)** on Dense. Exact
+per-episode reports are published in the [seed-0 evidence bundle](../../results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/README.md).
+These are pilot results, not a three-seed baseline or a reproduction claim for
+the original RLfOLD paper. The old Town05 vector/risk-field experiment is not
+part of the current `pixel_v1` contract.

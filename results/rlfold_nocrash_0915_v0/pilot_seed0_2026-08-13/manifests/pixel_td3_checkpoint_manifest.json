@@ -1,0 +1,38 @@
+{
+  "algorithm": "td3",
+  "selected": {
+    "file": "candidates/td3_ckpt_8000.pt",
+    "global_step": 8000,
+    "sha256": "d84895e83b8485188cf3cee1565b32ec702ae1aac5d6af63289fb23316338283"
+  },
+  "checkpoints": [
+    {
+      "file": "td3_ckpt_12000.pt",
+      "global_step": 12000,
+      "sha256": "fd7d870f37b593f1ef30e3f95cadc481bd6303ceb012f2fc9790e8ee60678276"
+    },
+    {
+      "file": "td3_ckpt_14000.pt",
+      "global_step": 14000,
+      "sha256": "81847e896bcad5087648a193848c68ca0c335b83b6ed1266c8d45398976bb64e"
+    },
+    {
+      "file": "td3_ckpt_16000.pt",
+      "global_step": 16000,
+      "sha256": "772ef13e7e3055706ede20c268644e8afdd924287068d24598a5ad7c31202697"
+    },
+    {
+      "file": "td3_ckpt_18000.pt",
+      "global_step": 18000,
+      "sha256": "65bc805409ee4e282a87dcc7548fadcb67a9fe3544214e7527f074c8b160648e"
+    },
+    {
+      "file": "td3_ckpt_20000.pt",
+      "global_step": 20000,
+      "sha256": "79b73b5508a866dec3cf240c5d43e29bbefdd4fd77f133a1eae27bc43b349769"
+    }
+  ],
+  "format_version": 1,
+  "latest": "td3_ckpt_last.pt",
+  "updated_at": "2026-08-12T19:47:55Z"
+}

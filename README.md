@@ -19,10 +19,11 @@ framework. The first release stays deliberately small: one primary pixel SAC
 baseline, one versioned NoCrash adaptation, transparent PyTorch code, and
 reproducible experiment artifacts.
 
-> **Research status:** the CARLA 0.9.15 connection, pixel observation, route
-> execution, replay updates, checkpoints, TensorBoard logging, and a real
-> end-to-end training smoke have been verified. A smoke run is not a converged
-> benchmark result. Multi-seed baselines are still in progress.
+> **Research status:** real 20k-step Pixel SAC, TD3, PPO, BC, and
+> demonstration-assisted SAC pilots have been trained in CARLA 0.9.15. The
+> selected seed-0 checkpoint achieved 46% success on the 50-episode Town02
+> Empty test, 24% on Regular, and 4% on Dense traffic. These are transparent
+> small-budget pilot results, not a three-seed paper baseline.
 
 ## Why CarlaRLLab
 
@@ -43,10 +44,10 @@ reproducible experiment artifacts.
 
 | Family | Algorithms | Implementation status |
 | --- | --- | --- |
-| Online, off-policy | SAC, TD3, DDPG | SAC has the primary pixel encoder; MLP cores are tested for all three |
-| Online, on-policy | PPO, A2C | Update equations and runner implemented; pixel encoder integration pending |
+| Online, off-policy | SAC, TD3, DDPG | Pixel SAC and TD3 trained in CARLA; DDPG MLP core tested |
+| Online, on-policy | PPO, A2C | Pixel PPO trained in CARLA; A2C core tested |
 | Offline RL | TD3+BC, CQL(H), IQL | Dataset runners and MLP cores implemented; pixel baselines pending |
-| Imitation | BC, GAIL, AIRL | Runners implemented; pixel baselines pending |
+| Imitation | BC, GAIL, AIRL | Pixel BC trained in CARLA; adversarial imitation cores tested |
 
 The registry prevents an algorithm from being launched with an incompatible
 runner. “Implemented” does not mean that a paper-quality CARLA checkpoint has
@@ -95,6 +96,31 @@ without ending a fixed evaluation route. Reports include route completion, retur
 speed, collision categories, red lights, blockage, and infractions per km. The
 red-light detector is a documented CARLA 0.9.15 approximation; this suite is
 therefore named as an adaptation, not as the legacy CARLA 0.8 NoCrash runner.
+
+## Reproducible Pilot Results
+
+The first tracked evidence bundle is available at
+[`results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/`](results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/).
+All algorithms used the same front-RGB contract, Town01 fixed 20/50 traffic
+curriculum, seed 0, and 10-episode Town02 Empty selection grid.
+
+| Method | Budget | Selected step | Selection success |
+| --- | ---: | ---: | ---: |
+| Pixel SAC | 20k environment steps | 8k | 0% |
+| Pixel TD3 | 20k environment steps | 8k | 40% |
+| Pixel BC | 10k updates / 10k demonstrations | 10k | 20% |
+| Pixel PPO | 20k environment steps | 20k | 0% |
+| Pixel SAC + demonstrations | 5k BC pretrain + 20k environment steps | **8k** | **60%** |
+
+The frozen demonstration-assisted SAC checkpoint was then evaluated on the
+complete 50-episode conditions: **46% Empty**, **24% Regular**, and **4% Dense**
+success. Dense used the unmodified requested 70 vehicles / 150 walkers. Full
+per-episode JSON, scalar CSV files, curves, commands, hashes, and
+limitations are included in the evidence bundle. The selected
+[`sac_demo_seed0_step8000.pt`](results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/checkpoints/sac_demo_seed0_step8000.pt)
+checkpoint is tracked directly and verified by SHA-256.
+
+![Demonstration-assisted SAC episode return](results/rlfold_nocrash_0915_v0/pilot_seed0_2026-08-13/curves/pixel_sac_demo_episode_reward.png)
 
 ## Repository Layout
 
@@ -267,6 +293,31 @@ Each packed transition contains two `42,358`-byte observations. A 30,000-entry
 replay buffer therefore needs roughly 2.5 GB for observations; size it for your
 machine.
 
+### Train With Online Demonstrations
+
+Collect BehaviorAgent demonstrations from the same curriculum, then combine
+actor pretraining with an explicit BC term in the SAC actor objective:
+
+```bash
+python scripts/collect_dataset.py \
+  --benchmark nocrash_train_regular_v0 --policy autopilot \
+  --transitions 10000 \
+  --output artifacts/datasets/nocrash_regular_demo_seed0_10k.npz \
+  --view-mode none --seed 0
+
+python scripts/train.py \
+  --benchmark nocrash_train_regular_v0 --algo sac \
+  --expert-dataset artifacts/datasets/nocrash_regular_demo_seed0_10k.npz \
+  --demo-pretrain-updates 5000 --demo-bc-coef 0.5 \
+  --total-timesteps 20000 --minimal-size 1500 \
+  --batch-size 64 --buffer-size 15000 --hidden-dim 128 \
+  --checkpoint-interval 2000 --logger tensorboard \
+  --run-name nocrash/pixel_sac_demo_seed0 --seed 0
+```
+
+This is a readable local adaptation inspired by online-demonstration research;
+it is not presented as an exact reproduction of RLfOLD's complete method.
+
 ## Evaluate On The Same Protocol
 
 Run one route and one weather first:
@@ -284,8 +335,12 @@ Then run all 150 Town02 episodes under the three traffic densities:
 python scripts/evaluate.py \
   --checkpoint /path/to/sac_ckpt_last.pt \
   --suite rlfold_nocrash_0915_v0 \
-  --logger tensorboard
+  --output-tag release --logger tensorboard
 ```
+
+Evaluation writes `progress.json` after every episode. Repeat the same command
+with `--resume` after an interruption; benchmark identity and checkpoint hash
+are validated before completed episodes are reused.
 
 Use the same checkpoint, route files, weather grid, traffic counts, image
 contract, and seed policy for every algorithm row. Results are written under
@@ -328,6 +383,13 @@ python scripts/export_curves.py \
 | Benchmark traffic/routes/weather | [`carla_rl_lab/benchmarks/specs.py`](carla_rl_lab/benchmarks/specs.py) |
 | Metrics and success rules | [`carla_rl_lab/evaluation/evaluator.py`](carla_rl_lab/evaluation/evaluator.py) |
 
+The first pilot exposed a concrete research problem: SAC and TD3 peaked early
+and then regressed while training return remained positive. The optional
+[CADR prototype](docs/research/cadr.md) tests whether conservative expert
+advantage plus twin-critic disagreement can adapt the demonstration constraint
+and improve traffic-density transfer. Its claim, metrics, related-work boundary,
+and preregistered ablation are documented before running the experiment.
+
 New reward functions should return both a scalar and named terms. New
 observation versions should receive a new protocol name and state shape instead
 of silently changing `pixel_v1`.
@@ -340,8 +402,10 @@ python scripts/collect_dataset.py \
   --benchmark nocrash_train_empty_v0 --policy autopilot \
   --transitions 100000 --output artifacts/datasets/nocrash_expert.npz
 
-# Offline and imitation runners (MLP baseline today; pixel adapter is pending)
+# Offline runner (pixel baselines remain pending)
 python scripts/train_offline.py --algo td3_bc --dataset artifacts/datasets/nocrash_expert.npz
+
+# Pixel behavior cloning
 python scripts/train_imitation.py --algo bc --expert-dataset artifacts/datasets/nocrash_expert.npz
 
 # End-to-end 64-step integration matrix, not a performance benchmark
@@ -357,8 +421,9 @@ the [algorithm guide](docs/algorithms/README.md). Benchmark definitions are in
 
 - [ ] Validate CARLA 0.9.15 with three full training seeds and publish
   checkpoints plus raw TensorBoard/W&B exports.
-- [ ] Add pixel-native encoders for TD3, DDPG, PPO, A2C, offline RL, and
-  imitation learning; train every algorithm on the same NoCrash suite.
+- [x] Train seed-0 pixel SAC, TD3, PPO, BC, and demonstration-assisted SAC
+  pilots on the same NoCrash adaptation and publish their curves.
+- [ ] Add pixel-native DDPG, A2C, offline RL, GAIL, and AIRL baselines.
 - [ ] Report loss, return, route completion, success, collision categories,
   red-light infractions, and blockage for every released checkpoint.
 - [ ] Version and ablate camera history, route representation, speed, steering,
